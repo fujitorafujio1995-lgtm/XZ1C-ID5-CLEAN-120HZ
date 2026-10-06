@@ -184,7 +184,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             CONFIG_CC_WERROR=n \
-            KCFLAGS="-Wno-error=frame-larger-than" \
+            KCFLAGS="-Wno-error=frame-larger-than -Wno-error=incompatible-pointer-types-discards-qualifiers" \
             Image.gz-dtb
 
           test -s out/arch/arm64/boot/Image.gz-dtb
