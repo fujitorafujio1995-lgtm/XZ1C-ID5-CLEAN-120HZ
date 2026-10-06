@@ -180,7 +180,7 @@ jobs:
         run: |
           set -eux
           mkdir -p boot-original
-          python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original
+          python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original > boot-original/unpack.log 2>&1
           test -s boot-original/ramdisk
           stat -c '%n %s bytes' boot-original/kernel boot-original/ramdisk
           sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk
@@ -189,12 +189,14 @@ jobs:
         run: |
           set -eux
 
-          CFG=boot-original/bootimg.cfg
-          test -s "$CFG"
+          # unpack_bootimg.py from the current AOSP tool does not create bootimg.cfg.
+          # Capture its printed metadata instead and use the stock values verbatim.
+          python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original > boot-original/unpack.log 2>&1
+          CFG_LOG=boot-original/unpack.log
 
-          OS_VERSION="$(sed -n 's/^os_version = //p' "$CFG")"
-          OS_PATCH_LEVEL="$(sed -n 's/^os_patch_level = //p' "$CFG")"
-          CMDLINE="$(sed -n 's/^cmdline = //p' "$CFG")"
+          OS_VERSION="$(sed -n 's/^os version: //p' "$CFG_LOG")"
+          OS_PATCH_LEVEL="$(sed -n 's/^os patch level: //p' "$CFG_LOG")"
+          CMDLINE="$(sed -n 's/^command line args: //p' "$CFG_LOG")"
 
           test "$OS_VERSION" = "15.0.0"
           test "$OS_PATCH_LEVEL" = "2026-05"
@@ -224,13 +226,141 @@ jobs:
           cmp -s boot-original/ramdisk boot-verified/ramdisk
 
           echo "===== VERIFIED BOOT METADATA ====="
-          cat boot-verified/bootimg.cfg
+          cat boot-verified/unpack.log
 
-          grep -q '^os_version = 15.0.0$' boot-verified/bootimg.cfg
-          grep -q '^os_patch_level = 2026-05$' boot-verified/bootimg.cfg
+          grep -q '^os version: 15.0.0
 
-          STOCK_CMDLINE="$(sed -n 's/^cmdline = //p' boot-original/bootimg.cfg)"
-          NEW_CMDLINE="$(sed -n 's/^cmdline = //p' boot-verified/bootimg.cfg)"
+          echo "PASS: kernel payload is the built Image.gz-dtb"
+          echo "PASS: stock ramdisk preserved byte-for-byte"
+          echo "PASS: stock OS version/patch metadata preserved"
+          echo "PASS: stock cmdline preserved exactly"
+
+          python3 - <<'PY'
+          import struct, zlib
+          from pathlib import Path
+
+          MAGIC = b"\xd0\x0d\xfe\xed"
+
+          def appended_dtbs(kernel):
+              dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+              dec.decompress(kernel)
+              data = dec.unused_data
+              out = []
+              p = 0
+              while p < len(data):
+                  if data[p:p+4] != MAGIC:
+                      break
+                  size = struct.unpack(">I", data[p+4:p+8])[0]
+                  if size < 40 or p + size > len(data):
+                      raise SystemExit("FAIL: invalid appended DTB")
+                  out.append(data[p:p+size])
+                  p += size
+              return out
+
+          stock = appended_dtbs(Path("boot-original/kernel").read_bytes())
+          new = appended_dtbs(Path("boot-verified/kernel").read_bytes())
+
+          if len(stock) != 2 or len(new) != 2:
+              raise SystemExit(f"FAIL: expected 2 DTBs; stock={len(stock)} new={len(new)}")
+
+          if stock[1] != new[1]:
+              raise SystemExit("FAIL: RUMI DTB changed")
+
+          if new[0] == stock[0]:
+              raise SystemExit("FAIL: Lilac DTB did not change")
+
+          print("PASS: DTB order is unchanged: Lilac-DCM -> RUMI")
+          print("PASS: RUMI DTB is byte-identical to stock")
+          print("PASS: only Lilac-DCM DTB differs, as intended for ID5")
+          PY
+
+      - name: Package final artifacts
+        run: |
+          set -eux
+          mkdir -p artifact
+          cp boot-120hz-120fps.img artifact/
+          cp rom/boot.img artifact/boot-original.img
+          cp out/arch/arm64/boot/Image.gz-dtb artifact/
+          cp arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi artifact/dsi-panel-lilac-ID5-120hz.dtsi
+          cp drivers/video/fbdev/msm/mdss_dsi_panel_driver.h artifact/mdss_dsi_panel_driver-120fps.h
+          sha256sum artifact/* > artifact/SHA256SUMS
+          ls -lh artifact/
+
+      - name: Upload final artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: XZ1C-SO02K-ID5-120Hz-120FPS-BOOT
+          path: artifact/
+          if-no-files-found: error
+ boot-verified/unpack.log
+          grep -q '^os patch level: 2026-05
+
+          echo "PASS: kernel payload is the built Image.gz-dtb"
+          echo "PASS: stock ramdisk preserved byte-for-byte"
+          echo "PASS: stock OS version/patch metadata preserved"
+          echo "PASS: stock cmdline preserved exactly"
+
+          python3 - <<'PY'
+          import struct, zlib
+          from pathlib import Path
+
+          MAGIC = b"\xd0\x0d\xfe\xed"
+
+          def appended_dtbs(kernel):
+              dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+              dec.decompress(kernel)
+              data = dec.unused_data
+              out = []
+              p = 0
+              while p < len(data):
+                  if data[p:p+4] != MAGIC:
+                      break
+                  size = struct.unpack(">I", data[p+4:p+8])[0]
+                  if size < 40 or p + size > len(data):
+                      raise SystemExit("FAIL: invalid appended DTB")
+                  out.append(data[p:p+size])
+                  p += size
+              return out
+
+          stock = appended_dtbs(Path("boot-original/kernel").read_bytes())
+          new = appended_dtbs(Path("boot-verified/kernel").read_bytes())
+
+          if len(stock) != 2 or len(new) != 2:
+              raise SystemExit(f"FAIL: expected 2 DTBs; stock={len(stock)} new={len(new)}")
+
+          if stock[1] != new[1]:
+              raise SystemExit("FAIL: RUMI DTB changed")
+
+          if new[0] == stock[0]:
+              raise SystemExit("FAIL: Lilac DTB did not change")
+
+          print("PASS: DTB order is unchanged: Lilac-DCM -> RUMI")
+          print("PASS: RUMI DTB is byte-identical to stock")
+          print("PASS: only Lilac-DCM DTB differs, as intended for ID5")
+          PY
+
+      - name: Package final artifacts
+        run: |
+          set -eux
+          mkdir -p artifact
+          cp boot-120hz-120fps.img artifact/
+          cp rom/boot.img artifact/boot-original.img
+          cp out/arch/arm64/boot/Image.gz-dtb artifact/
+          cp arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi artifact/dsi-panel-lilac-ID5-120hz.dtsi
+          cp drivers/video/fbdev/msm/mdss_dsi_panel_driver.h artifact/mdss_dsi_panel_driver-120fps.h
+          sha256sum artifact/* > artifact/SHA256SUMS
+          ls -lh artifact/
+
+      - name: Upload final artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: XZ1C-SO02K-ID5-120Hz-120FPS-BOOT
+          path: artifact/
+          if-no-files-found: error
+ boot-verified/unpack.log
+
+          STOCK_CMDLINE="$(sed -n 's/^command line args: //p' boot-original/unpack.log)"
+          NEW_CMDLINE="$(sed -n 's/^command line args: //p' boot-verified/unpack.log)"
           test "$STOCK_CMDLINE" = "$NEW_CMDLINE"
 
           echo "PASS: kernel payload is the built Image.gz-dtb"
