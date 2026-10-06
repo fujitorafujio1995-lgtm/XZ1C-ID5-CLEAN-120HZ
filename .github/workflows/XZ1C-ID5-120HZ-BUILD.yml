@@ -68,18 +68,20 @@ jobs:
           test "$(readlink drivers/kernelsu)" = "../KernelSU-Next/kernel"
 
       - name: Download stock Android 15 baseline boot
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -eux
           mkdir -p rom
-          gh release download "${BASELINE_RELEASE}" \
-            --repo "${BASELINE_REPO}" \
-            --pattern 'Android_15_SO-02K_Update.zip' \
-            --dir rom
+
+          BASELINE_URL="https://github.com/${BASELINE_REPO}/releases/download/${BASELINE_RELEASE}/Android_15_SO-02K_Update.zip"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --connect-timeout 20 --max-time 1800 \
+            "${BASELINE_URL}" \
+            -o rom/Android_15_SO-02K_Update.zip
+
           SHA="$(sha256sum rom/Android_15_SO-02K_Update.zip | awk '{print $1}')"
           echo "ROM SHA256=$SHA"
           test "$SHA" = "${BASELINE_SHA256}"
+
           unzip -p rom/Android_15_SO-02K_Update.zip boot.img > rom/boot.img
           test -s rom/boot.img
           sha256sum rom/boot.img
