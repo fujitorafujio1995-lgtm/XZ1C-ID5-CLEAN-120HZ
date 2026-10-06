@@ -72,10 +72,14 @@ jobs:
           set -eux
           mkdir -p rom
 
-          BASELINE_URL="https://github.com/${BASELINE_REPO}/releases/download/${BASELINE_RELEASE}/Android_15_SO-02K_Update.zip"
+          BASELINE_ASSET_ID="527272340"
+          BASELINE_API="https://api.github.com/repos/${BASELINE_REPO}/releases/assets/${BASELINE_ASSET_ID}"
+
           curl --fail --location --retry 5 --retry-all-errors \
             --connect-timeout 20 --max-time 1800 \
-            "${BASELINE_URL}" \
+            -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "${BASELINE_API}" \
             -o rom/Android_15_SO-02K_Update.zip
 
           SHA="$(sha256sum rom/Android_15_SO-02K_Update.zip | awk '{print $1}')"
