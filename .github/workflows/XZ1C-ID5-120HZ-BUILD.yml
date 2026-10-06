@@ -150,7 +150,7 @@ jobs:
           # The clean baseline intentionally leaves the appended-DTB list empty.
           # Keep the stock Lilac-DCM + RUMI append order required by the boot image.
           sed -i 's|^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES=.*|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="qcom/msm8998-v2.1-yoshino-lilac_dcm qcom/msmhamster-rumi"|' out/.config
-          make O=out ARCH=arm64 LLVM=/usr/lib/llvm-19/bin/ LLVM_IAS=1 olddefconfig
+          make O=out ARCH=arm64 olddefconfig
 
           grep -E \
             'CONFIG_MACH_SONY_LILAC_DCM|CONFIG_ARCH_MSMHAMSTER|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE|CONFIG_IMG_GZ_DTB|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES|CONFIG_LOCALVERSION|CONFIG_KSU' \
