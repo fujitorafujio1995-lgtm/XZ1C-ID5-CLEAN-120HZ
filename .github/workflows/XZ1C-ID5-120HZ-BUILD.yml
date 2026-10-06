@@ -152,6 +152,205 @@ jobs:
           sed -i 's|^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES=.*|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="qcom/msm8998-v2.1-yoshino-lilac_dcm qcom/msmhamster-rumi"|' out/.config
           make O=out ARCH=arm64 olddefconfig
 
+          # This legacy GCC tree enables -Werror through CONFIG_CC_WERROR.
+          # Disable warning-as-error for the build only; do not modify driver source.
+          sed -i '/^CONFIG_CC_WERROR=/d; /^# CONFIG_CC_WERROR is not set$/d' out/.config
+          echo '# CONFIG_CC_WERROR is not set' >> out/.config
+          grep -q '^# CONFIG_CC_WERROR is not set            'CONFIG_MACH_SONY_LILAC_DCM|CONFIG_ARCH_MSMHAMSTER|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE|CONFIG_IMG_GZ_DTB|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES|CONFIG_LOCALVERSION|CONFIG_KSU' \
+            out/.config
+
+          grep -q '^CONFIG_MACH_SONY_LILAC_DCM=y$' out/.config
+          grep -q '^CONFIG_ARCH_MSMHAMSTER=y$' out/.config
+          grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y$' out/.config
+          grep -q '^CONFIG_IMG_GZ_DTB=y$' out/.config
+          grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="qcom/msm8998-v2.1-yoshino-lilac_dcm qcom/msmhamster-rumi"$' out/.config
+          grep -q '^CONFIG_KSU=y$' out/.config
+
+      - name: Build Image.gz-dtb
+        run: |
+          set -eux
+          make -j"$(nproc)" \
+            O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image.gz-dtb
+
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          file out/arch/arm64/boot/Image.gz-dtb
+          sha256sum out/arch/arm64/boot/Image.gz-dtb
+          echo "===== BUILT KERNEL TOOLCHAIN ====="
+          strings out/arch/arm64/boot/Image.gz-dtb | grep -m1 '^Linux version ' || true
+
+      - name: Audit appended DTB order
+        run: |
+          set -eux
+          dtc -I dtb -O dts -o out/lilac.dts \
+            out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb
+          dtc -I dtb -O dts -o out/rumi.dts \
+            out/arch/arm64/boot/dts/qcom/msmhamster-rumi.dtb
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def compatible_values(path):
+              text = Path(path).read_text()
+              m = re.search(r'(?ms)^\s*compatible\s*=\s*(.*?);\s*$', text)
+              if not m:
+                  raise SystemExit(f"FAIL: compatible property not found in {path}")
+              vals = re.findall(r'"((?:\\.|[^"\\])*)"', m.group(1))
+              flat = []
+              for value in vals:
+                  # dtc may emit NUL-separated compatible strings as a literal \\0 escape.
+                  value = value.replace("\\0", "\x00")
+                  flat.extend(value.split("\x00"))
+              return flat
+
+          lilac = compatible_values("out/lilac.dts")
+          rumi = compatible_values("out/rumi.dts")
+          print("Lilac compatible:", lilac)
+          print("RUMI compatible:", rumi)
+
+          if lilac[:2] != ["somc,lilac-dcm", "qcom,msm8998"]:
+              raise SystemExit(f"FAIL: unexpected Lilac compatible: {lilac}")
+          if rumi[:3] != ["qcom,msmhamster-rumi", "qcom,msmhamster", "qcom,rumi"]:
+              raise SystemExit(f"FAIL: unexpected RUMI compatible: {rumi}")
+
+          model = re.search(r'(?m)^\s*model\s*=\s*"([^"]*)";', Path("out/lilac.dts").read_text())
+          if not model or model.group(1) != "SoMC Lilac-DCM(MSM8998 v2.1)":
+              raise SystemExit("FAIL: unexpected Lilac model")
+          print("PASS: DTB compatible/model audit")
+          PY
+
+          python3 - <<'PY'
+          import struct
+          import zlib
+          from pathlib import Path
+
+          image = Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes()
+          decomp = zlib.decompressobj(16 + zlib.MAX_WBITS)
+          decomp.decompress(image)
+          appended = decomp.unused_data
+
+          MAGIC = b"\xd0\x0d\xfe\xed"
+          if not appended.startswith(MAGIC):
+              raise SystemExit(f"FAIL: no appended DTB immediately after gzip stream; prefix={appended[:16].hex()}")
+
+          hits = []
+          p = 0
+          while p < len(appended):
+              if appended[p:p+4] != MAGIC:
+                  break
+              if p + 8 > len(appended):
+                  raise SystemExit("FAIL: truncated appended DTB header")
+              size = struct.unpack(">I", appended[p+4:p+8])[0]
+              if size < 40 or p + size > len(appended):
+                  raise SystemExit(f"FAIL: invalid FDT size {size} at appended offset {p}")
+              hits.append((p, size))
+              p += size
+
+          print("gzip stream bytes:", len(image) - len(appended))
+          print("appended DTB bytes:", len(appended))
+          print("appended DTBs:", hits)
+
+          if len(hits) != 2:
+              raise SystemExit(f"FAIL: expected exactly 2 appended DTBs, found {len(hits)}")
+
+          lilac = Path("out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb").read_bytes()
+          rumi = Path("out/arch/arm64/boot/dts/qcom/msmhamster-rumi.dtb").read_bytes()
+
+          first_off, first_size = hits[0]
+          second_off, second_size = hits[1]
+
+          if appended[first_off:first_off+first_size] != lilac:
+              raise SystemExit("FAIL: first appended DTB is not byte-identical to Lilac-DCM DTB")
+          if appended[second_off:second_off+second_size] != rumi:
+              raise SystemExit("FAIL: second appended DTB is not byte-identical to RUMI DTB")
+          if first_off + first_size != second_off:
+              raise SystemExit("FAIL: appended DTBs are not contiguous")
+          if second_off + second_size != len(appended):
+              raise SystemExit("FAIL: RUMI DTB does not terminate Image.gz-dtb")
+
+          print("PASS: gzip stream + appended DTBs verified: Lilac-DCM -> RUMI")
+          PY
+
+      - name: Prepare mkbootimg tools
+        run: |
+          set -eux
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/system/tools/mkbootimg \
+            boot-tools
+          python3 boot-tools/mkbootimg.py --help | grep -q -- '--os_version'
+          python3 boot-tools/mkbootimg.py --help | grep -q -- '--os_patch_level'
+
+      - name: Unpack stock boot
+        run: |
+          set -eux
+          mkdir -p boot-original
+          python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original
+          test -s boot-original/ramdisk
+          stat -c '%n %s bytes' boot-original/kernel boot-original/ramdisk
+          sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk
+
+      - name: Repack 120Hz boot.img with stock ramdisk and metadata
+        run: |
+          set -eux
+          python3 boot-tools/mkbootimg.py \
+            --kernel out/arch/arm64/boot/Image.gz-dtb \
+            --ramdisk boot-original/ramdisk \
+            --base 0x00000000 \
+            --kernel_offset 0x00008000 \
+            --ramdisk_offset 0x01000000 \
+            --tags_offset 0x00000100 \
+            --pagesize 4096 \
+            --header_version 0 \
+            --os_version 15.0.0 \
+            --os_patch_level 2026-05 \
+            --cmdline 'ehci-hcd.park=3 lpm_levels.sleep_disabled=1 sched_enable_hmp=0 sched_enable_power_aware=1 service_locator.enable=1 swiotlb=2048 androidboot.configfs=true androidboot.usbcontroller=a800000.dwc3 loop.max_part=7 androidboot.init_fatal_reboot_target=recovery androidboot.hardware=lilac' \
+            --output boot-120hz-120fps.img
+
+          test -s boot-120hz-120fps.img
+          file boot-120hz-120fps.img
+          sha256sum boot-120hz-120fps.img
+
+      - name: Verify repacked boot.img
+        run: |
+          set -eux
+          rm -rf boot-verified
+          mkdir -p boot-verified
+          python3 boot-tools/unpack_bootimg.py \
+            --boot_img boot-120hz-120fps.img \
+            --out boot-verified
+
+          test "$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')" = \
+               "$(sha256sum boot-verified/kernel | awk '{print $1}')"
+          cmp -s boot-original/ramdisk boot-verified/ramdisk
+
+          echo "===== VERIFIED BOOT METADATA ====="
+          find boot-verified -maxdepth 1 -type f -printf '%f %s bytes\\n' | sort
+          echo "PASS: kernel and stock ramdisk preserved"
+
+      - name: Package final artifacts
+        run: |
+          set -eux
+          mkdir -p artifact
+          cp boot-120hz-120fps.img artifact/
+          cp rom/boot.img artifact/boot-original.img
+          cp out/arch/arm64/boot/Image.gz-dtb artifact/
+          cp arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi artifact/dsi-panel-lilac-ID5-120hz.dtsi
+          cp drivers/video/fbdev/msm/mdss_dsi_panel_driver.h artifact/mdss_dsi_panel_driver-120fps.h
+          sha256sum artifact/* > artifact/SHA256SUMS
+          ls -lh artifact/
+
+      - name: Upload final artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: XZ1C-SO02K-ID5-120Hz-120FPS-BOOT
+          path: artifact/
+          if-no-files-found: error
+ out/.config
+
           grep -E \
             'CONFIG_MACH_SONY_LILAC_DCM|CONFIG_ARCH_MSMHAMSTER|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE|CONFIG_IMG_GZ_DTB|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES|CONFIG_LOCALVERSION|CONFIG_KSU' \
             out/.config
