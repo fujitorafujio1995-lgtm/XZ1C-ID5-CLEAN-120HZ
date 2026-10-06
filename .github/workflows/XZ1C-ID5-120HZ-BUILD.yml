@@ -182,8 +182,11 @@ jobs:
           mkdir -p boot-original
           python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original > boot-original/unpack.log 2>&1
           test -s boot-original/ramdisk
-          stat -c '%n %s bytes' boot-original/kernel boot-original/ramdisk
-          sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk
+          test -s boot-original/second
+          stat -c '%n %s bytes' boot-original/kernel boot-original/ramdisk boot-original/second
+          sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk boot-original/second
+          test "$(stat -c '%s' boot-original/ramdisk)" -eq 32768
+          test "$(stat -c '%s' boot-original/second)" -eq 1814690
 
       - name: Repack 120Hz boot.img with exact stock metadata
         run: |
@@ -203,6 +206,7 @@ jobs:
           python3 boot-tools/mkbootimg.py \
             --kernel out/arch/arm64/boot/Image.gz-dtb \
             --ramdisk boot-original/ramdisk \
+            --second boot-original/second \
             --base 0x00000000 \
             --kernel_offset 0x00008000 \
             --ramdisk_offset 0x01000000 \
@@ -228,6 +232,10 @@ jobs:
           test "$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')" = \
                "$(sha256sum boot-verified/kernel | awk '{print $1}')"
           cmp -s boot-original/ramdisk boot-verified/ramdisk
+          cmp -s boot-original/second boot-verified/second
+          test "$(stat -c '%s' boot-verified/ramdisk)" -eq 32768
+          test "$(stat -c '%s' boot-verified/second)" -eq 1814690
+          echo "PASS: stock ramdisk and second payload preserved byte-for-byte"
           echo "===== VERIFIED BOOT METADATA ====="
           cat boot-verified/unpack.log
           grep -q '^os version: 15.0.0$' boot-verified/unpack.log
@@ -236,7 +244,7 @@ jobs:
           NEW_CMDLINE="$(sed -n 's/^command line args: //p' boot-verified/unpack.log)"
           test "$STOCK_CMDLINE" = "$NEW_CMDLINE"
           echo "PASS: kernel payload is the built Image.gz-dtb"
-          echo "PASS: stock ramdisk preserved byte-for-byte"
+          echo "PASS: stock ramdisk and second payload preserved byte-for-byte"
           echo "PASS: stock OS version/patch metadata preserved"
           echo "PASS: stock cmdline preserved exactly"
           python3 - <<'PY'
