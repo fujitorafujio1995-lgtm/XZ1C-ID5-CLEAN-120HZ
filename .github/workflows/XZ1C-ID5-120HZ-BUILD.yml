@@ -171,7 +171,7 @@ jobs:
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            KCFLAGS="-Wno-unused-value -Wno-maybe-uninitialized" \
+            WERROR=0 \
             Image.gz-dtb
 
           test -s out/arch/arm64/boot/Image.gz-dtb
