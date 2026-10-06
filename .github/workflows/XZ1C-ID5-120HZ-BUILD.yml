@@ -163,7 +163,11 @@ jobs:
           file out/arch/arm64/boot/Image.gz-dtb
           sha256sum out/arch/arm64/boot/Image.gz-dtb
 
-      # DTB order is fixed by CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES above.\n      # No content-format audit here: dtc output formatting can vary by toolchain.\n      # The previous audit produced a false failure after a successful kernel build.\n\n      - name: Prepare mkbootimg tools
+      # DTB order is fixed by CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES above.
+      # No content-format audit here: dtc output formatting can vary by toolchain.
+      # The previous audit produced a false failure after a successful kernel build.
+
+      - name: Prepare mkbootimg tools
         run: |
           set -eux
           git clone --depth=1 \
