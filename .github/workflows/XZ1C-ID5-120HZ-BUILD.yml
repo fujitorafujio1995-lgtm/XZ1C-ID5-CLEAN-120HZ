@@ -227,7 +227,7 @@ jobs:
           import struct
           from pathlib import Path
           kernel = Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes()
-          MAGIC = b"\\xd0\\r\\xfe\\xed"
+          MAGIC = b"\xd0\r\xfe\xed"
           hits = []
           p = 0
           while True:
