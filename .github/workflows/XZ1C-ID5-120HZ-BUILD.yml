@@ -234,7 +234,7 @@ jobs:
           python3 boot-tools/mkbootimg.py \
             --kernel out/arch/arm64/boot/Image.gz-dtb \
             --ramdisk boot-original/ramdisk \
-            "\${SECOND_ARGS[@]}" \
+            "${SECOND_ARGS[@]}" \
             --base 0x00000000 \
             --kernel_offset 0x00008000 \
             --ramdisk_offset 0x01000000 \
