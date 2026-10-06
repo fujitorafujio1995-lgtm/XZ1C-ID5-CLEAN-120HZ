@@ -260,11 +260,17 @@ jobs:
               raise SystemExit(f"FAIL: unexpected stock page size: {page}")
           if len(stock) < page or len(new) < page:
               raise SystemExit("FAIL: boot image shorter than header page")
-          new[:page] = stock[:page]
+
+          # Save the kernel size BEFORE replacing the header with stock bytes.
           new_kernel_size = struct.unpack_from("<I", new, 8)[0]
+
+          # Preserve the complete stock legacy header page, then restore only
+          # the kernel_size field required for the rebuilt kernel payload.
+          new[:page] = stock[:page]
           struct.pack_into("<I", new, 8, new_kernel_size)
+
           Path("boot-120hz-120fps.img").write_bytes(new)
-          print("PASS: preserved complete stock legacy header page; kernel_size updated only")
+          print(f"PASS: preserved complete stock legacy header page; kernel_size={new_kernel_size}")
           PY
 
           file boot-120hz-120fps.img
