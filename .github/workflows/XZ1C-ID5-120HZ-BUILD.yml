@@ -39,21 +39,18 @@ jobs:
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             python3 file
 
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update
-          sudo apt-get install -y clang-19 lld-19 llvm-19
+          # Keep the known-good baseline toolchain: the successful ROM workflow
+          # did not force LLVM/Clang; it used the distro AArch64 cross toolchain.
+          aarch64-linux-gnu-gcc --version
+          arm-linux-gnueabi-gcc --version
 
-      - name: Configure LLVM 19 PATH
+      - name: Verify baseline build toolchain
         run: |
           set -eux
-          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
-          export PATH="/usr/lib/llvm-19/bin:$PATH"
-          clang --version
-          ld.lld --version
-          llvm-ar --version
+          command -v aarch64-linux-gnu-gcc
+          command -v arm-linux-gnueabi-gcc
+          aarch64-linux-gnu-gcc --version
+          arm-linux-gnueabi-gcc --version
 
       - name: Restore exact KernelSU-Next source
         run: |
@@ -146,8 +143,6 @@ jobs:
         run: |
           set -eux
           make O=out ARCH=arm64 \
-            LLVM=/usr/lib/llvm-19/bin/ \
-            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             "${DEFCONFIG}"
@@ -174,8 +169,6 @@ jobs:
           make -j"$(nproc)" \
             O=out \
             ARCH=arm64 \
-            LLVM=/usr/lib/llvm-19/bin/ \
-            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             Image.gz-dtb
@@ -183,6 +176,8 @@ jobs:
           test -s out/arch/arm64/boot/Image.gz-dtb
           file out/arch/arm64/boot/Image.gz-dtb
           sha256sum out/arch/arm64/boot/Image.gz-dtb
+          echo "===== BUILT KERNEL TOOLCHAIN ====="
+          strings out/arch/arm64/boot/Image.gz-dtb | grep -m1 '^Linux version ' || true
 
       - name: Audit appended DTB order
         run: |
