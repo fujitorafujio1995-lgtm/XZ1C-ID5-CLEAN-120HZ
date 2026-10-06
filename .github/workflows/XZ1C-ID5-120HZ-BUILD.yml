@@ -2,6 +2,9 @@ name: XZ1C ID5 120Hz 120FPS 120Hz-Touch BUILD
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ID5-120HZ-120FPS
 
 permissions:
   contents: read
