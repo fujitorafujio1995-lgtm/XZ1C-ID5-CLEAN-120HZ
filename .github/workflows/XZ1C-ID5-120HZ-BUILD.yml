@@ -224,48 +224,55 @@ jobs:
           PY
 
           python3 - <<'PY'
-          import gzip
           import struct
+          import zlib
           from pathlib import Path
 
-          compressed = Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes()
-          try:
-              kernel = gzip.decompress(compressed)
-          except Exception as exc:
-              raise SystemExit(f"FAIL: cannot decompress Image.gz-dtb: {exc}")
+          image = Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes()
+          decomp = zlib.decompressobj(16 + zlib.MAX_WBITS)
+          decomp.decompress(image)
+          appended = decomp.unused_data
 
           MAGIC = b"\xd0\x0d\xfe\xed"
+          if not appended.startswith(MAGIC):
+              raise SystemExit(f"FAIL: no appended DTB immediately after gzip stream; prefix={appended[:16].hex()}")
+
           hits = []
           p = 0
-          while True:
-              p = kernel.find(MAGIC, p)
-              if p < 0:
+          while p < len(appended):
+              if appended[p:p+4] != MAGIC:
                   break
-              hits.append(p)
-              p += 1
+              if p + 8 > len(appended):
+                  raise SystemExit("FAIL: truncated appended DTB header")
+              size = struct.unpack(">I", appended[p+4:p+8])[0]
+              if size < 40 or p + size > len(appended):
+                  raise SystemExit(f"FAIL: invalid FDT size {size} at appended offset {p}")
+              hits.append((p, size))
+              p += size
+
+          print("gzip stream bytes:", len(image) - len(appended))
+          print("appended DTB bytes:", len(appended))
+          print("appended DTBs:", hits)
 
           if len(hits) != 2:
-              raise SystemExit(f"FAIL: expected 2 appended DTBs after gzip decompression, found {len(hits)}")
+              raise SystemExit(f"FAIL: expected exactly 2 appended DTBs, found {len(hits)}")
 
-          def fdt_size(off):
-              if off + 8 > len(kernel):
-                  raise SystemExit("FAIL: truncated FDT header")
-              return struct.unpack(">I", kernel[off+4:off+8])[0]
-
-          sizes = [fdt_size(x) for x in hits]
           lilac = Path("out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb").read_bytes()
           rumi = Path("out/arch/arm64/boot/dts/qcom/msmhamster-rumi.dtb").read_bytes()
 
-          if kernel[hits[0]:hits[0]+sizes[0]] != lilac:
-              raise SystemExit("FAIL: first DTB is not Lilac-DCM")
-          if kernel[hits[1]:hits[1]+sizes[1]] != rumi:
-              raise SystemExit("FAIL: second DTB is not RUMI")
-          if hits[0] + sizes[0] != hits[1]:
-              raise SystemExit("FAIL: DTBs are not contiguous")
-          if hits[1] + sizes[1] != len(kernel):
-              raise SystemExit("FAIL: second DTB does not terminate decompressed Image.gz-dtb")
+          first_off, first_size = hits[0]
+          second_off, second_size = hits[1]
 
-          print("PASS: gzip Image.gz-dtb decompressed; Lilac-DCM -> RUMI DTB order")
+          if appended[first_off:first_off+first_size] != lilac:
+              raise SystemExit("FAIL: first appended DTB is not byte-identical to Lilac-DCM DTB")
+          if appended[second_off:second_off+second_size] != rumi:
+              raise SystemExit("FAIL: second appended DTB is not byte-identical to RUMI DTB")
+          if first_off + first_size != second_off:
+              raise SystemExit("FAIL: appended DTBs are not contiguous")
+          if second_off + second_size != len(appended):
+              raise SystemExit("FAIL: RUMI DTB does not terminate Image.gz-dtb")
+
+          print("PASS: gzip stream + appended DTBs verified: Lilac-DCM -> RUMI")
           PY
 
       - name: Prepare mkbootimg tools
