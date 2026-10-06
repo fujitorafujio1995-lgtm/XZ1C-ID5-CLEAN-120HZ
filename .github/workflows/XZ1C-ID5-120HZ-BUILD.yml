@@ -204,6 +204,8 @@ jobs:
               vals = re.findall(r'"((?:\\.|[^"\\])*)"', m.group(1))
               flat = []
               for value in vals:
+                  # dtc may emit NUL-separated compatible strings as a literal \\0 escape.
+                  value = value.replace("\\0", "\x00")
                   flat.extend(value.split("\x00"))
               return flat
 
