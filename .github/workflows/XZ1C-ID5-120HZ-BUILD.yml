@@ -68,12 +68,19 @@ jobs:
           test "$(readlink drivers/kernelsu)" = "../KernelSU-Next/kernel"
 
       - name: Download stock Android 15 baseline boot
+        env:
+          BASELINE_REPO_TOKEN: ${{ secrets.BASELINE_REPO_TOKEN }}
         run: |
           set -eux
           mkdir -p rom
 
-          unset GH_TOKEN
-          gh release download "${BASELINE_RELEASE}" \
+          if [ -z "${BASELINE_REPO_TOKEN:-}" ]; then
+            echo "::error::Missing repository secret BASELINE_REPO_TOKEN"
+            echo "::error::Add a token with read access to ${BASELINE_REPO}"
+            exit 1
+          fi
+
+          GH_TOKEN="$BASELINE_REPO_TOKEN" gh release download "${BASELINE_RELEASE}" \
             --repo "${BASELINE_REPO}" \
             --pattern "Android_15_SO-02K_Update.zip" \
             --dir rom
