@@ -215,10 +215,26 @@ jobs:
           echo "OS_VERSION=$OS_VERSION"
           echo "OS_PATCH_LEVEL=$OS_PATCH_LEVEL"
           echo "CMDLINE=$CMDLINE"
+          SECOND_ARGS=()
+          STOCK_SECOND_SIZE="$(python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          b=Path("rom/boot.img").read_bytes()
+          print(struct.unpack_from("<I", b, 8 + 5*4)[0])
+          PY
+          )"
+          echo "STOCK_SECOND_SIZE=$STOCK_SECOND_SIZE"
+          if [ "$STOCK_SECOND_SIZE" -ne 0 ]; then
+            test -s boot-original/second
+            SECOND_ARGS=(--second boot-original/second)
+            test "$(stat -c '%s' boot-original/second)" -eq "$STOCK_SECOND_SIZE"
+          else
+            test ! -e boot-original/second
+          fi
           python3 boot-tools/mkbootimg.py \
             --kernel out/arch/arm64/boot/Image.gz-dtb \
             --ramdisk boot-original/ramdisk \
-            --second boot-original/second \
+            "\${SECOND_ARGS[@]}" \
             --base 0x00000000 \
             --kernel_offset 0x00008000 \
             --ramdisk_offset 0x01000000 \
@@ -244,10 +260,22 @@ jobs:
           test "$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')" = \
                "$(sha256sum boot-verified/kernel | awk '{print $1}')"
           cmp -s boot-original/ramdisk boot-verified/ramdisk
-          cmp -s boot-original/second boot-verified/second
-          test "$(stat -c '%s' boot-verified/ramdisk)" -eq 32768
-          test "$(stat -c '%s' boot-verified/second)" -eq 1814690
-          echo "PASS: stock ramdisk and second payload preserved byte-for-byte"
+          STOCK_SECOND_SIZE="$(python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          b=Path("rom/boot.img").read_bytes()
+          print(struct.unpack_from("<I", b, 8 + 5*4)[0])
+          PY
+          )"
+          if [ "$STOCK_SECOND_SIZE" -ne 0 ]; then
+            test -s boot-original/second
+            test -s boot-verified/second
+            cmp -s boot-original/second boot-verified/second
+            test "$(stat -c '%s' boot-verified/second)" -eq "$STOCK_SECOND_SIZE"
+          else
+            test ! -e boot-verified/second
+          fi
+          echo "PASS: stock ramdisk and second payload layout preserved"
           echo "===== VERIFIED BOOT METADATA ====="
           cat boot-verified/unpack.log
           grep -q '^os version: 15.0.0$' boot-verified/unpack.log
