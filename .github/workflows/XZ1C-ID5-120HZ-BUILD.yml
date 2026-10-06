@@ -21,10 +21,11 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout clean baseline
+      - name: Checkout clean baseline kernel
         uses: actions/checkout@v4
         with:
-          ref: xz1c-android15-baseline
+          repository: ${{ env.BASELINE_REPO }}
+          ref: lineage-22.2
           fetch-depth: 1
 
       - name: Install dependencies
@@ -94,7 +95,7 @@ jobs:
           block = m.group(0)
 
           replacements = [
-              ("qcom,mdss-dsi-panel-framerate = <60>;",
+              ("qcom,mdss-dsi-panel-framerate = <90>;",
                "qcom,mdss-dsi-panel-framerate = <120>;"),
               ("qcom,mdss-dsi-panel-clockrate = <899000000>;",
                "qcom,mdss-dsi-panel-clockrate = <1798076160>;"),
