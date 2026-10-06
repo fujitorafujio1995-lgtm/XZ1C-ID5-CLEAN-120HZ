@@ -1,0 +1,289 @@
+name: XZ1C ID5 120Hz 120FPS 120Hz-Touch BUILD
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: SO-02K Lilac DCM ID5 120Hz
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget \
+            gnupg \
+            ca-certificates \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            cpio \
+            gzip \
+            zip \
+            unzip \
+            device-tree-compiler \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            binutils-arm-linux-gnueabi \
+            python3
+
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+
+          sudo apt-get update
+          sudo apt-get install -y clang-19 lld-19 llvm-19
+
+      - name: Configure LLVM 19 PATH
+        run: |
+          set -eux
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/llvm-19/bin:$PATH"
+          clang --version
+          ld.lld --version
+          llvm-ar --version
+
+      - name: Verify clean source and KernelSU
+        run: |
+          set -eux
+
+          echo "===== COMMIT ====="
+          git rev-parse HEAD
+
+          echo "===== KERNEL ====="
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)[[:space:]]*=' Makefile
+
+          echo "===== LILAC DCM ====="
+          grep -n 'CONFIG_MACH_SONY_LILAC_DCM' \
+            arch/arm64/configs/lineage-msm8998-yoshino-lilac_dcm_defconfig
+
+          echo "===== KERNELSU ====="
+          test -f .gitmodules
+          git submodule status
+          test -d KernelSU-Next/kernel
+          test -L drivers/kernelsu
+          test "$(readlink drivers/kernelsu)" = "../KernelSU-Next/kernel"
+
+          echo "===== UNRELATED SUBSYSTEMS ====="
+          test -d drivers/net/wireless
+          test -d drivers/bluetooth
+          echo "WLAN/Bluetooth trees present"
+
+      - name: Verify fixed ID5 120Hz source
+        run: |
+          set -eux
+
+          PANEL="arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi"
+          DRIVER="drivers/video/fbdev/msm/mdss_dsi_panel_driver.c"
+          HEADER="drivers/video/fbdev/msm/mdss_dsi_panel_driver.h"
+
+          ID5="$(awk '
+          /dsi_5: somc,5_panel[[:space:]]*\{/ { in_id5=1 }
+          in_id5 { print }
+          in_id5 && /^[[:space:]]*};[[:space:]]*$/ { exit }
+          ' "$PANEL")"
+
+          test -n "$ID5"
+          printf '%s\n' "$ID5"
+
+          echo "===== ID5 120HZ VALUES ====="
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-v-front-porch = <4>;'
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-framerate = <120>;'
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-tear-check-frame-rate = <12000>;'
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-clockrate = <950976000>;'
+
+          echo "===== ID5 DFPS MUST REMAIN DISABLED ====="
+          ! printf '%s\n' "$ID5" | grep -q 'somc,change-fps-'
+          ! printf '%s\n' "$ID5" | grep -q 'somc,driver-ic-vtp'
+
+          echo "===== NO DRIVER MODIFICATIONS ====="
+          ! grep -q 'DFPS120DIRECT' "$DRIVER"
+          ! grep -q 'msm8998_direct_clock' "$DRIVER"
+          ! grep -q 'DFPS120DIRECT' "$HEADER"
+          ! grep -q 'msm8998_direct_clock' "$HEADER"
+
+          echo "FIXED ID5 120HZ/120FPS SOURCE CHECK: PASS"
+
+      - name: Configure Lilac DCM
+        run: |
+          set -eux
+          make \
+            O=out \
+            ARCH=arm64 \
+            LLVM=/usr/lib/llvm-19/bin/ \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            lineage-msm8998-yoshino-lilac_dcm_defconfig
+
+      - name: Verify generated configuration
+        run: |
+          set -eux
+          grep -q '^CONFIG_MACH_SONY_LILAC_DCM=y$' out/.config
+          grep -nE 'CONFIG_KSU|CONFIG_KSU_DEBUG' out/.config || true
+          grep -q '^CONFIG_ARM64=y$' out/.config
+
+      - name: Build kernel and DTB
+        run: |
+          set -eux
+          make -j"$(nproc)" \
+            O=out \
+            ARCH=arm64 \
+            LLVM=/usr/lib/llvm-19/bin/ \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image.gz-dtb
+
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          sha256sum out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Prepare mkbootimg
+        run: |
+          set -eux
+          rm -rf tools/mkbootimg
+          git clone --depth 1 \
+            https://android.googlesource.com/platform/system/tools/mkbootimg \
+            tools/mkbootimg
+          test -f tools/mkbootimg/unpack_bootimg.py
+          test -f tools/mkbootimg/mkbootimg.py
+
+      - name: Prepare stock boot ramdisk
+        run: |
+          set -eux
+
+          test -s boot/boot-original.img
+
+          mkdir -p boot-original
+
+          python3 tools/mkbootimg/unpack_bootimg.py \
+            --boot_img boot/boot-original.img \
+            --out boot-original
+
+          test -s boot-original/ramdisk
+
+          echo "===== STOCK BOOT ====="
+          sha256sum boot/boot-original.img
+          echo "EXPECTED_BOOT_SHA=43917d758a4a85281bdbc9713d4c578a0d193527e9cd4bde0f49a1d752b3cbb2"
+
+          echo "===== STOCK RAMDISK ====="
+          sha256sum boot-original/ramdisk
+
+          test "$(sha256sum boot-original/ramdisk | awk '{print $1}')" = \
+            "754c8cc968b7d6bef0daa48e50c75b0fb95cde81ce927af4d0d62dcf375f2e59"
+
+      - name: Package boot120hz.img
+        run: |
+          set -eux
+
+          CMDLINE='ehci-hcd.park=3 lpm_levels.sleep_disabled=1 sched_enable_hmp=0 sched_enable_power_aware=1 service_locator.enable=1 swiotlb=2048 androidboot.configfs=true androidboot.usbcontroller=a800000.dwc3 loop.max_part=7 androidboot.init_fatal_reboot_target=recovery androidboot.hardware=lilac'
+
+          python3 tools/mkbootimg/mkbootimg.py \
+            --kernel out/arch/arm64/boot/Image.gz-dtb \
+            --ramdisk boot-original/ramdisk \
+            --base 0 \
+            --kernel_offset 0x8000 \
+            --ramdisk_offset 0x1000000 \
+            --tags_offset 0x100 \
+            --pagesize 4096 \
+            --header_version 0 \
+            --cmdline "$CMDLINE" \
+            --os_version 15.0.0 \
+            --os_patch_level 2026-05 \
+            -o boot120hz.img
+
+          test -s boot120hz.img
+          ls -lh boot120hz.img
+          sha256sum boot120hz.img
+
+      - name: Verify boot120hz.img
+        run: |
+          set -eux
+
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          p = Path("boot120hz.img")
+          b = p.read_bytes()
+          assert b[:8] == b"ANDROID!"
+
+          (
+              kernel_size,
+              kernel_addr,
+              ramdisk_size,
+              ramdisk_addr,
+              second_size,
+              second_addr,
+              tags_addr,
+              page_size,
+              header_version,
+          ) = struct.unpack_from("<9I", b, 8)
+
+          os_raw = struct.unpack_from("<I", b, 44)[0]
+          major = (os_raw >> 25) & 0x7f
+          minor = (os_raw >> 18) & 0x7f
+          patch = (os_raw >> 11) & 0x7f
+
+          cmdline = b[64:576].split(b"\\0", 1)[0].decode("ascii", "replace")
+
+          print("kernel_size =", kernel_size)
+          print("kernel_addr =", hex(kernel_addr))
+          print("ramdisk_size =", ramdisk_size)
+          print("ramdisk_addr =", hex(ramdisk_addr))
+          print("tags_addr =", hex(tags_addr))
+          print("page_size =", page_size)
+          print("header_version =", header_version)
+          print("OS =", f"{major}.{minor}.{patch}")
+          print("cmdline =", cmdline)
+
+          assert page_size == 4096
+          assert header_version == 0
+          assert kernel_addr == 0x8000
+          assert ramdisk_addr == 0x1000000
+          assert tags_addr == 0x100
+          assert (major, minor, patch) == (15, 0, 0)
+          assert ramdisk_size == 1814690
+          assert cmdline == (
+              "ehci-hcd.park=3 "
+              "lpm_levels.sleep_disabled=1 "
+              "sched_enable_hmp=0 "
+              "sched_enable_power_aware=1 "
+              "service_locator.enable=1 "
+              "swiotlb=2048 "
+              "androidboot.configfs=true "
+              "androidboot.usbcontroller=a800000.dwc3 "
+              "loop.max_part=7 "
+              "androidboot.init_fatal_reboot_target=recovery "
+              "androidboot.hardware=lilac"
+          )
+
+          print("BOOT HEADER CHECK: PASS")
+          PY
+
+      - name: Package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: XZ1C-SO02K-ID5-120HZ-120FPS
+          path: |
+            boot120hz.img
+            out/arch/arm64/boot/Image.gz-dtb
+          if-no-files-found: error
