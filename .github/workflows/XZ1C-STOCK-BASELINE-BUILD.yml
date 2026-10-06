@@ -1,0 +1,373 @@
+name: XZ1C STOCK BASELINE REPRO BUILD
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+env:
+  DEFCONFIG: lineage-msm8998-yoshino-lilac_dcm_defconfig
+  BASELINE_REPO: fujitorafujio1995-lgtm/android_kernel_sony_msm8998
+  BASELINE_RELEASE: xz1c-android15-baseline
+  BASELINE_SHA256: 2b44624558ea4cfc3b9c13bf00b76604da688124d336214e47e001711e37a7be
+  KSU_COMMIT: bac3e281b7062ee79448866d48d78eda60c0ba99
+
+jobs:
+  build:
+    name: SO-02K clean baseline Android 15
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout clean baseline
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget gnupg ca-certificates \
+            bc bison flex libssl-dev libelf-dev \
+            cpio gzip zip unzip device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
+            python3 file
+
+
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-19 lld-19 llvm-19
+
+      - name: Configure LLVM 19 PATH
+        run: |
+          set -eux
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/llvm-19/bin:$PATH"
+          clang --version
+          ld.lld --version
+          llvm-ar --version
+
+      - name: Restore exact KernelSU-Next source
+        run: |
+          set -eux
+          git clone --depth=1 --branch legacy \
+            https://github.com/justinlin099/KernelSU-Next.git KernelSU-Next
+          cd KernelSU-Next
+          git fetch --depth=1 origin "${KSU_COMMIT}"
+          git checkout "${KSU_COMMIT}"
+          cd ..
+          test -L drivers/kernelsu
+          test "$(readlink drivers/kernelsu)" = "../KernelSU-Next/kernel"
+
+      - name: Download stock Android 15 baseline boot
+        env:
+          BASELINE_REPO_TOKEN: ${{ secrets.BASELINE_REPO_TOKEN }}
+        run: |
+          set -eux
+          mkdir -p rom
+
+          if [ -z "${BASELINE_REPO_TOKEN:-}" ]; then
+            echo "::error::Missing repository secret BASELINE_REPO_TOKEN"
+            echo "::error::Add a token with read access to ${BASELINE_REPO}"
+            exit 1
+          fi
+
+          GH_TOKEN="$BASELINE_REPO_TOKEN" gh release download "${BASELINE_RELEASE}" \
+            --repo "${BASELINE_REPO}" \
+            --pattern "Android_15_SO-02K_Update.zip" \
+            --dir rom
+
+          test -s rom/Android_15_SO-02K_Update.zip
+          SHA="$(sha256sum rom/Android_15_SO-02K_Update.zip | cut -d' ' -f1)"
+          echo "ROM SHA256=$SHA"
+          test "$SHA" = "${BASELINE_SHA256}"
+
+          unzip -p rom/Android_15_SO-02K_Update.zip boot.img > rom/boot.img
+          test -s rom/boot.img
+          sha256sum rom/boot.img
+      - name: Verify unmodified ID5 source
+        run: |
+          set -eux
+          grep -q 'qcom,mdss-dsi-panel-framerate = <60>;' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi
+          grep -q 'qcom,mdss-dsi-panel-clockrate = <899000000>;' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi
+          grep -q '^#define CHANGE_FPS_MAX 60$' drivers/video/fbdev/msm/mdss_dsi_panel_driver.h
+          git diff --exit-code -- arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi drivers/video/fbdev/msm/mdss_dsi_panel_driver.h
+          echo "PASS: no 120Hz/120FPS source patch"
+
+      - name: Configure Lilac DCM
+        run: |
+          set -eux
+          make O=out ARCH=arm64 \
+            LLVM=/usr/lib/llvm-19/bin/ \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            "${DEFCONFIG}"
+
+          # The clean baseline intentionally leaves the appended-DTB list empty.
+          # Keep the stock Lilac-DCM + RUMI append order required by the boot image.
+          sed -i 's|^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES=.*|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="qcom/msm8998-v2.1-yoshino-lilac_dcm qcom/msmhamster-rumi"|' out/.config
+          make O=out ARCH=arm64 LLVM=/usr/lib/llvm-19/bin/ LLVM_IAS=1 olddefconfig
+
+          grep -E \
+            'CONFIG_MACH_SONY_LILAC_DCM|CONFIG_ARCH_MSMHAMSTER|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE|CONFIG_IMG_GZ_DTB|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES|CONFIG_LOCALVERSION|CONFIG_KSU' \
+            out/.config
+
+          grep -q '^CONFIG_MACH_SONY_LILAC_DCM=y$' out/.config
+          grep -q '^CONFIG_ARCH_MSMHAMSTER=y$' out/.config
+          grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y$' out/.config
+          grep -q '^CONFIG_IMG_GZ_DTB=y$' out/.config
+          grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="qcom/msm8998-v2.1-yoshino-lilac_dcm qcom/msmhamster-rumi"$' out/.config
+          grep -q '^CONFIG_KSU=y$' out/.config
+
+      - name: Build Image.gz-dtb
+        run: |
+          set -eux
+
+          make -j"$(nproc)" \
+            O=out \
+            ARCH=arm64 \
+            LLVM=/usr/lib/llvm-19/bin/ \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CONFIG_CC_WERROR=n \
+            KCFLAGS="-Wno-error=frame-larger-than -Wno-error=incompatible-pointer-types-discards-qualifiers" \
+            Image.gz-dtb
+
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          file out/arch/arm64/boot/Image.gz-dtb
+          sha256sum out/arch/arm64/boot/Image.gz-dtb
+
+      # DTB order is fixed by CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES above.\n      # Keep this audit-free: verify DTB payload/order after repacking against stock.
+      # No content-format audit here: dtc output formatting can vary by toolchain.
+      # The previous audit produced a false failure after a successful kernel build.
+
+      - name: Prepare mkbootimg tools
+        run: |
+          set -eux
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/system/tools/mkbootimg \
+            boot-tools
+          python3 boot-tools/mkbootimg.py --help | grep -q -- '--os_version'
+          python3 boot-tools/mkbootimg.py --help | grep -q -- '--os_patch_level'
+
+      - name: Unpack stock boot
+        run: |
+          set -eux
+          mkdir -p boot-original
+          python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original > boot-original/unpack.log 2>&1
+          test -s boot-original/ramdisk
+          echo "===== STOCK UNPACK LOG ====="
+          cat boot-original/unpack.log
+          echo "===== STOCK UNPACKED FILES ====="
+          ls -lah boot-original
+          stat -c '%n %s bytes' boot-original/kernel boot-original/ramdisk 2>/dev/null || true
+          sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk 2>/dev/null || true
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          b=Path("rom/boot.img").read_bytes()
+          if b[:8] != b"ANDROID!":
+              raise SystemExit("FAIL: stock boot magic is not ANDROID!")
+          vals=struct.unpack_from("<10I", b, 8)
+          print("STOCK HEADER:")
+          for k,v in zip(["kernel_size","kernel_addr","ramdisk_size","ramdisk_addr","second_size","second_addr","tags_addr","page_size","header_version","os_version_raw"], vals):
+              print(f"{k}={v} (0x{v:x})")
+          PY
+
+      - name: Repack clean-source boot.img with exact stock metadata
+        run: |
+          set -eux
+          CFG_LOG=boot-original/unpack.log
+          test -s "$CFG_LOG"
+          OS_VERSION="$(sed -n 's/^os version: //p' "$CFG_LOG")"
+          OS_PATCH_LEVEL="$(sed -n 's/^os patch level: //p' "$CFG_LOG")"
+          CMDLINE="$(sed -n 's/^command line args: //p' "$CFG_LOG")"
+          test "$OS_VERSION" = "15.0.0"
+          test "$OS_PATCH_LEVEL" = "2026-05"
+          test -n "$CMDLINE"
+          echo "===== STOCK METADATA USED FOR REPACK ====="
+          echo "OS_VERSION=$OS_VERSION"
+          echo "OS_PATCH_LEVEL=$OS_PATCH_LEVEL"
+          echo "CMDLINE=$CMDLINE"
+          SECOND_ARGS=()
+          STOCK_SECOND_SIZE="$(python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          b=Path("rom/boot.img").read_bytes()
+          print(struct.unpack_from("<I", b, 8 + 5*4)[0])
+          PY
+          )"
+          echo "STOCK_SECOND_SIZE=$STOCK_SECOND_SIZE"
+          if [ "$STOCK_SECOND_SIZE" -ne 0 ]; then
+            test -s boot-original/second
+            SECOND_ARGS=(--second boot-original/second)
+            test "$(stat -c '%s' boot-original/second)" -eq "$STOCK_SECOND_SIZE"
+          else
+            test ! -e boot-original/second
+          fi
+          python3 boot-tools/mkbootimg.py \
+            --kernel out/arch/arm64/boot/Image.gz-dtb \
+            --ramdisk boot-original/ramdisk \
+            "${SECOND_ARGS[@]}" \
+            --base 0x00000000 \
+            --kernel_offset 0x00008000 \
+            --ramdisk_offset 0x01000000 \
+            --tags_offset 0x00000100 \
+            --pagesize 4096 \
+            --header_version 0 \
+            --os_version "$OS_VERSION" \
+            --os_patch_level "$OS_PATCH_LEVEL" \
+            --cmdline "$CMDLINE" \
+            --output boot-clean-source.img
+          test -s boot-120hz-120fps.img
+
+          # Sony's legacy ABL is sensitive to the legacy header ID/metadata.
+          # Preserve the stock first-page header byte-for-byte, changing ONLY
+          # kernel_size because the rebuilt Image.gz-dtb has a different size.
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          stock = bytearray(Path("rom/boot.img").read_bytes())
+          new = bytearray(Path("boot-120hz-120fps.img").read_bytes())
+          page = struct.unpack_from("<I", stock, 36)[0]
+          if page != 4096:
+              raise SystemExit(f"FAIL: unexpected stock page size: {page}")
+          if len(stock) < page or len(new) < page:
+              raise SystemExit("FAIL: boot image shorter than header page")
+
+          # Save the kernel size BEFORE replacing the header with stock bytes.
+          new_kernel_size = struct.unpack_from("<I", new, 8)[0]
+
+          # Preserve the complete stock legacy header page, then restore only
+          # the kernel_size field required for the rebuilt kernel payload.
+          new[:page] = stock[:page]
+          struct.pack_into("<I", new, 8, new_kernel_size)
+
+          Path("boot-120hz-120fps.img").write_bytes(new)
+          print(f"PASS: preserved complete stock legacy header page; kernel_size={new_kernel_size}")
+          PY
+
+          file boot-120hz-120fps.img
+          sha256sum boot-120hz-120fps.img
+
+      - name: Verify clean-source boot.img against stock
+        run: |
+          set -eux
+          rm -rf boot-verified
+          mkdir -p boot-verified
+          python3 boot-tools/unpack_bootimg.py \
+            --boot_img boot-120hz-120fps.img \
+            --out boot-verified > boot-verified/unpack.log 2>&1
+          test "$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')" = \
+               "$(sha256sum boot-verified/kernel | awk '{print $1}')"
+          cmp -s boot-original/ramdisk boot-verified/ramdisk
+          STOCK_SECOND_SIZE="$(python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          b=Path("rom/boot.img").read_bytes()
+          print(struct.unpack_from("<I", b, 8 + 5*4)[0])
+          PY
+          )"
+          if [ "$STOCK_SECOND_SIZE" -ne 0 ]; then
+            test -s boot-original/second
+            test -s boot-verified/second
+            cmp -s boot-original/second boot-verified/second
+            test "$(stat -c '%s' boot-verified/second)" -eq "$STOCK_SECOND_SIZE"
+          else
+            test ! -e boot-verified/second
+          fi
+          echo "PASS: stock ramdisk and second payload layout preserved"
+          echo "===== VERIFIED BOOT METADATA ====="
+          cat boot-verified/unpack.log
+          grep -q '^os version: 15.0.0$' boot-verified/unpack.log
+          grep -q '^os patch level: 2026-05$' boot-verified/unpack.log
+          STOCK_CMDLINE="$(sed -n 's/^command line args: //p' boot-original/unpack.log)"
+          NEW_CMDLINE="$(sed -n 's/^command line args: //p' boot-verified/unpack.log)"
+          test "$STOCK_CMDLINE" = "$NEW_CMDLINE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          stock = Path("rom/boot.img").read_bytes()
+          new = Path("boot-120hz-120fps.img").read_bytes()
+          page = struct.unpack_from("<I", stock, 36)[0]
+          if page != struct.unpack_from("<I", new, 36)[0]:
+              raise SystemExit("FAIL: page size changed")
+          if stock[:8] != new[:8]:
+              raise SystemExit("FAIL: boot magic changed")
+          # Every header byte except kernel_size must match stock exactly.
+          if stock[12:page] != new[12:page]:
+              diffs=[i for i in range(12,page) if stock[i]!=new[i]]
+              raise SystemExit(f"FAIL: unexpected stock-header differences: {diffs[:32]}")
+          stock_kernel_size=struct.unpack_from("<I",stock,8)[0]
+          new_kernel_size=struct.unpack_from("<I",new,8)[0]
+          if new_kernel_size == stock_kernel_size:
+              raise SystemExit("FAIL: new kernel_size was not updated")
+          print(f"PASS: legacy header identical to stock except kernel_size ({stock_kernel_size} -> {new_kernel_size})")
+          print("PASS: stock OS/version/cmdline/name/legacy-ID fields preserved")
+          PY
+          echo "PASS: kernel payload is the built Image.gz-dtb"
+          echo "PASS: stock ramdisk and second payload preserved byte-for-byte"
+          echo "PASS: stock OS version/patch metadata preserved"
+          echo "PASS: stock cmdline preserved exactly"
+          python3 - <<'PY'
+          import struct, zlib
+          from pathlib import Path
+          MAGIC = b"\xd0\x0d\xfe\xed"
+          def appended_dtbs(kernel):
+              dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+              dec.decompress(kernel)
+              data = dec.unused_data
+              out = []
+              p = 0
+              while p < len(data):
+                  if data[p:p+4] != MAGIC:
+                      break
+                  size = struct.unpack(">I", data[p+4:p+8])[0]
+                  if size < 40 or p + size > len(data):
+                      raise SystemExit("FAIL: invalid appended DTB")
+                  out.append(data[p:p+size])
+                  p += size
+              return out
+          stock = appended_dtbs(Path("boot-original/kernel").read_bytes())
+          new = appended_dtbs(Path("boot-verified/kernel").read_bytes())
+          if len(stock) != 2 or len(new) != 2:
+              raise SystemExit(f"FAIL: expected 2 DTBs; stock={len(stock)} new={len(new)}")
+          if stock[1] != new[1]:
+              raise SystemExit("FAIL: RUMI DTB changed")
+          if new[0] == stock[0]:
+              raise SystemExit("FAIL: Lilac DTB did not change")
+          print("PASS: DTB order is unchanged: Lilac-DCM -> RUMI")
+          print("PASS: RUMI DTB is byte-identical to stock")
+          print("PASS: only Lilac-DCM DTB differs, as intended for ID5")
+          PY
+
+      - name: Package stock baseline test artifacts
+        run: |
+          set -eux
+          mkdir -p artifact
+          cp boot-120hz-120fps.img artifact/
+          cp rom/boot.img artifact/boot-original.img
+          cp out/arch/arm64/boot/Image.gz-dtb artifact/
+          cp arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi artifact/dsi-panel-lilac-ID5-120hz.dtsi
+          cp drivers/video/fbdev/msm/mdss_dsi_panel_driver.h artifact/mdss_dsi_panel_driver-120fps.h
+          sha256sum artifact/* > artifact/SHA256SUMS
+          ls -lh artifact/
+
+      - name: Upload stock baseline test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: XZ1C-SO02K-STOCK-SOURCE-BASELINE-TEST
+          path: artifact/
+          if-no-files-found: error
