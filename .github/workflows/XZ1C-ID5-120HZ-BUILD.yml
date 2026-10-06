@@ -72,24 +72,20 @@ jobs:
           set -eux
           mkdir -p rom
 
-          BASELINE_ASSET_ID="527272340"
-          BASELINE_API="https://api.github.com/repos/${BASELINE_REPO}/releases/assets/${BASELINE_ASSET_ID}"
+          unset GH_TOKEN
+          gh release download "${BASELINE_RELEASE}" \
+            --repo "${BASELINE_REPO}" \
+            --pattern "Android_15_SO-02K_Update.zip" \
+            --dir rom
 
-          curl --fail --location --retry 5 --retry-all-errors \
-            --connect-timeout 20 --max-time 1800 \
-            -H "Accept: application/octet-stream" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            "${BASELINE_API}" \
-            -o rom/Android_15_SO-02K_Update.zip
-
-          SHA="$(sha256sum rom/Android_15_SO-02K_Update.zip | awk '{print $1}')"
+          test -s rom/Android_15_SO-02K_Update.zip
+          SHA="$(sha256sum rom/Android_15_SO-02K_Update.zip | cut -d' ' -f1)"
           echo "ROM SHA256=$SHA"
           test "$SHA" = "${BASELINE_SHA256}"
 
           unzip -p rom/Android_15_SO-02K_Update.zip boot.img > rom/boot.img
           test -s rom/boot.img
           sha256sum rom/boot.img
-
       - name: Apply ID5-only 120Hz/120FPS source patch
         run: |
           set -eux
