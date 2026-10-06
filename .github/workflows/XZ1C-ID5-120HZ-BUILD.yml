@@ -224,10 +224,17 @@ jobs:
           PY
 
           python3 - <<'PY'
+          import gzip
           import struct
           from pathlib import Path
-          kernel = Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes()
-          MAGIC = b"\xd0\r\xfe\xed"
+
+          compressed = Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes()
+          try:
+              kernel = gzip.decompress(compressed)
+          except Exception as exc:
+              raise SystemExit(f"FAIL: cannot decompress Image.gz-dtb: {exc}")
+
+          MAGIC = b"\xd0\x0d\xfe\xed"
           hits = []
           p = 0
           while True:
@@ -236,13 +243,19 @@ jobs:
                   break
               hits.append(p)
               p += 1
+
           if len(hits) != 2:
-              raise SystemExit(f"FAIL: expected 2 appended DTBs, found {len(hits)}")
+              raise SystemExit(f"FAIL: expected 2 appended DTBs after gzip decompression, found {len(hits)}")
+
           def fdt_size(off):
+              if off + 8 > len(kernel):
+                  raise SystemExit("FAIL: truncated FDT header")
               return struct.unpack(">I", kernel[off+4:off+8])[0]
+
           sizes = [fdt_size(x) for x in hits]
           lilac = Path("out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb").read_bytes()
           rumi = Path("out/arch/arm64/boot/dts/qcom/msmhamster-rumi.dtb").read_bytes()
+
           if kernel[hits[0]:hits[0]+sizes[0]] != lilac:
               raise SystemExit("FAIL: first DTB is not Lilac-DCM")
           if kernel[hits[1]:hits[1]+sizes[1]] != rumi:
@@ -250,8 +263,9 @@ jobs:
           if hits[0] + sizes[0] != hits[1]:
               raise SystemExit("FAIL: DTBs are not contiguous")
           if hits[1] + sizes[1] != len(kernel):
-              raise SystemExit("FAIL: second DTB does not terminate Image.gz-dtb")
-          print("PASS: Lilac-DCM -> RUMI DTB order")
+              raise SystemExit("FAIL: second DTB does not terminate decompressed Image.gz-dtb")
+
+          print("PASS: gzip Image.gz-dtb decompressed; Lilac-DCM -> RUMI DTB order")
           PY
 
       - name: Prepare mkbootimg tools
