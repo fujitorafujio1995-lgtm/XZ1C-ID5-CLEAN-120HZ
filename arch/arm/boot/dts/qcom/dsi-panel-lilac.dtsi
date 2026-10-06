@@ -33,10 +33,11 @@
 		qcom,mdss-dsi-h-front-porch = <280>;
 		qcom,mdss-dsi-v-back-porch = <8>;
 		qcom,mdss-dsi-v-pulse-width = <8>;
-		qcom,mdss-dsi-v-front-porch = <1162>;
+		qcom,mdss-dsi-v-front-porch = <4>;
 		qcom,mdss-pan-physical-width-dimension = <56>;
 		qcom,mdss-pan-physical-height-dimension = <100>;
-		qcom,mdss-dsi-panel-framerate = <60>;
+		qcom,mdss-dsi-panel-framerate = <120>;
+		qcom,mdss-tear-check-frame-rate = <12000>;
 		qcom,mdss-dsi-virtual-channel-id = <0>;
 		qcom,mdss-dsi-stream = <0>;
 		qcom,mdss-dsi-h-sync-skew = <0>;
@@ -93,7 +94,7 @@
 		qcom,mdss-dsi-panel-peak-brightness = <7000000>;
 		qcom,mdss-dsi-panel-blackness-level = <4646>;
 
-		qcom,mdss-dsi-panel-clockrate = <899000000>;
+		qcom,mdss-dsi-panel-clockrate = <950976000>;
 
 		somc,lcd-id-adc = <801000 917000>;
 		somc,mdss-dsi-master;
@@ -130,18 +131,6 @@
 		somc,ewu-rst-seq = <0 2>, <1 5>;
 		somc,ewu-wait-after-touch-reset = <0>;
 
-		somc,change-fps-enable;
-		somc,change-fps-panel-type = "full_incell_type";
-		somc,change-fps-panel-mode = "dynamic_mode";
-		somc,change-fps-command =
-				[29 01 00 00 00 00 02 B0 04
-				 29 01 00 00 00 00 02 D6 01
-				 29 01 00 00 00 00 02 C6 59];
-		somc,driver-ic-total-porch = <11>;
-		somc,driver-ic-vdisp = <1280>;
-		somc,driver-ic-rclk = <14000000>;
-		somc,driver-ic-vtp = <1330>;
-		somc,change-fps-rtn-pos = <2 1>;
 
 		somc,mdss-dsi-disp-on-in-hs = <0>;
 		somc,mdss-dsi-wait-time-before-post-on-cmd = <0>;
