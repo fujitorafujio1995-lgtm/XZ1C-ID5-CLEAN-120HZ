@@ -39,6 +39,23 @@ jobs:
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             python3 file
 
+
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-19 lld-19 llvm-19
+
+      - name: Configure LLVM 19 PATH
+        run: |
+          set -eux
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/llvm-19/bin:$PATH"
+          clang --version
+          ld.lld --version
+          llvm-ar --version
+
       - name: Restore exact KernelSU-Next source
         run: |
           set -eux
@@ -157,7 +174,7 @@ jobs:
         run: |
           set -eux
 
-          make -j"$(nproc)"             O=out             ARCH=arm64             CROSS_COMPILE=aarch64-linux-gnu-             CROSS_COMPILE_ARM32=arm-linux-gnueabi-             CONFIG_CC_WERROR=n             KCFLAGS="-Wno-error -Wno-unused-value -Wno-maybe-uninitialized"             Image.gz-dtb
+          make -j"$(nproc)"             O=out             ARCH=arm64             LLVM=/usr/lib/llvm-19/bin/             LLVM_IAS=1             CROSS_COMPILE=aarch64-linux-gnu-             CROSS_COMPILE_ARM32=arm-linux-gnueabi-             CONFIG_CC_WERROR=n             KCFLAGS="-Wno-error -Wno-unused-value -Wno-maybe-uninitialized"             Image.gz-dtb
 
           test -s out/arch/arm64/boot/Image.gz-dtb
           file out/arch/arm64/boot/Image.gz-dtb
