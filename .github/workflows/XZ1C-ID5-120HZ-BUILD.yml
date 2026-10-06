@@ -176,7 +176,15 @@ jobs:
         run: |
           set -eux
 
-          make -j"$(nproc)"             O=out             ARCH=arm64             LLVM=/usr/lib/llvm-19/bin/             LLVM_IAS=1             CROSS_COMPILE=aarch64-linux-gnu-             CROSS_COMPILE_ARM32=arm-linux-gnueabi-             CONFIG_CC_WERROR=n             KCFLAGS="-Wno-error -Wno-unused-value -Wno-maybe-uninitialized"             Image.gz-dtb
+          make -j"$(nproc)" \
+            O=out \
+            ARCH=arm64 \
+            LLVM=/usr/lib/llvm-19/bin/ \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CONFIG_CC_WERROR=n \
+            Image.gz-dtb
 
           test -s out/arch/arm64/boot/Image.gz-dtb
           file out/arch/arm64/boot/Image.gz-dtb
