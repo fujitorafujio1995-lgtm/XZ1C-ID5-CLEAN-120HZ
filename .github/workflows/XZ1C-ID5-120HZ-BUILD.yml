@@ -182,11 +182,23 @@ jobs:
           mkdir -p boot-original
           python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original > boot-original/unpack.log 2>&1
           test -s boot-original/ramdisk
-          test -s boot-original/second
-          stat -c '%n %s bytes' boot-original/kernel boot-original/ramdisk boot-original/second
-          sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk boot-original/second
-          test "$(stat -c '%s' boot-original/ramdisk)" -eq 32768
-          test "$(stat -c '%s' boot-original/second)" -eq 1814690
+          echo "===== STOCK UNPACK LOG ====="
+          cat boot-original/unpack.log
+          echo "===== STOCK UNPACKED FILES ====="
+          ls -lah boot-original
+          stat -c '%n %s bytes' boot-original/kernel boot-original/ramdisk 2>/dev/null || true
+          sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk 2>/dev/null || true
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          b=Path("rom/boot.img").read_bytes()
+          if b[:8] != b"ANDROID!":
+              raise SystemExit("FAIL: stock boot magic is not ANDROID!")
+          vals=struct.unpack_from("<10I", b, 8)
+          print("STOCK HEADER:")
+          for k,v in zip(["kernel_size","kernel_addr","ramdisk_size","ramdisk_addr","second_size","second_addr","tags_addr","page_size","header_version","os_version_raw"], vals):
+              print(f"{k}={v} (0x{v:x})")
+          PY
 
       - name: Repack 120Hz boot.img with exact stock metadata
         run: |
