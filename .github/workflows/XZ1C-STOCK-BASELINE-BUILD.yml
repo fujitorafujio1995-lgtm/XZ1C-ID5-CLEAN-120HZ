@@ -4,8 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-  push:
-    branches: [ main ]
 
 permissions:
   contents: read
@@ -231,7 +229,7 @@ jobs:
             --os_version "$OS_VERSION" \
             --os_patch_level "$OS_PATCH_LEVEL" \
             --cmdline "$CMDLINE" \
-            --output boot-clean-source.img
+            --output boot-120hz-120fps.img
           test -s boot-120hz-120fps.img
 
           # Sony's legacy ABL is sensitive to the legacy header ID/metadata.
@@ -348,11 +346,11 @@ jobs:
               raise SystemExit(f"FAIL: expected 2 DTBs; stock={len(stock)} new={len(new)}")
           if stock[1] != new[1]:
               raise SystemExit("FAIL: RUMI DTB changed")
-          if new[0] == stock[0]:
-              raise SystemExit("FAIL: Lilac DTB did not change")
+          if new[0] != stock[0]:
+              raise SystemExit("FAIL: Lilac-DCM DTB changed in clean baseline")
           print("PASS: DTB order is unchanged: Lilac-DCM -> RUMI")
           print("PASS: RUMI DTB is byte-identical to stock")
-          print("PASS: only Lilac-DCM DTB differs, as intended for ID5")
+          print("PASS: Lilac-DCM DTB is byte-identical to stock in clean baseline")
           PY
 
       - name: Package stock baseline test artifacts
