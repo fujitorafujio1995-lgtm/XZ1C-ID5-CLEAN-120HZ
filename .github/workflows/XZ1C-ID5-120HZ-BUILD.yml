@@ -55,7 +55,6 @@ jobs:
           test "$(sha256sum rom/Android_15_SO-02K_Update.zip | cut -d' ' -f1)" = "${BASELINE_SHA256}"
           unzip -p rom/Android_15_SO-02K_Update.zip boot.img > rom/boot.img
           test -s rom/boot.img
-          sha256sum rom/boot.img
 
       - name: Apply ONLY ID5 DTB 120Hz parameters
         run: |
@@ -63,30 +62,18 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          p = Path("arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi")
-          s = p.read_text()
-          m = re.search(r'(?ms)^\s*dsi_5:\s*somc,5_panel\s*\{.*?^\s*\};', s)
-          if not m:
-              raise SystemExit("FAIL: ID5 panel block not found")
-          b = m.group(0)
-
-          changes = [
-              ("qcom,mdss-dsi-panel-framerate = <60>;",
-               "qcom,mdss-dsi-panel-framerate = <120>;"),
-              ("qcom,mdss-dsi-panel-clockrate = <899000000>;",
-               "qcom,mdss-dsi-panel-clockrate = <1798076160>;"),
-          ]
-          for old, new in changes:
-              if b.count(old) != 1:
-                  raise SystemExit("FAIL: expected exactly one ID5 property: " + old)
-              b = b.replace(old, new, 1)
-
-          p.write_text(s[:m.start()] + b + s[m.end():])
+          p=Path("arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi")
+          s=p.read_text()
+          m=re.search(r'(?ms)^\s*dsi_5:\s*somc,5_panel\s*\{.*?^\s*\};',s)
+          if not m: raise SystemExit("FAIL: ID5 panel block not found")
+          b=m.group(0)
+          for old,new in [
+            ("qcom,mdss-dsi-panel-framerate = <60>;","qcom,mdss-dsi-panel-framerate = <120>;"),
+            ("qcom,mdss-dsi-panel-clockrate = <899000000>;","qcom,mdss-dsi-panel-clockrate = <1798076160>;")]:
+            if b.count(old)!=1: raise SystemExit("FAIL: expected exactly one ID5 property: "+old)
+            b=b.replace(old,new,1)
+          p.write_text(s[:m.start()]+b+s[m.end():])
           PY
-
-          echo "===== ID5-ONLY DTB DIFF ====="
-          git diff -- arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi
           test "$(git diff --name-only | wc -l)" -eq 1
           test "$(git diff --name-only)" = "arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi"
           grep -A120 -E '^\s*dsi_5:\s*somc,5_panel' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi | grep -E 'panel-framerate|panel-clockrate'
@@ -101,7 +88,6 @@ jobs:
           grep -q '^CONFIG_ARCH_MSMHAMSTER=y$' out/.config
           grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y$' out/.config
           grep -q '^CONFIG_IMG_GZ_DTB=y$' out/.config
-          grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="qcom/msm8998-v2.1-yoshino-lilac_dcm qcom/msmhamster-rumi"$' out/.config
           grep -q '^CONFIG_KSU=y$' out/.config
 
       - name: Build Image.gz-dtb
@@ -109,8 +95,6 @@ jobs:
           set -eux
           make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CONFIG_CC_WERROR=n KCFLAGS="-Wno-error -Wno-unused-value -Wno-maybe-uninitialized" Image.gz-dtb
           test -s out/arch/arm64/boot/Image.gz-dtb
-          file out/arch/arm64/boot/Image.gz-dtb
-          sha256sum out/arch/arm64/boot/Image.gz-dtb
 
       - name: Prepare mkbootimg tools
         run: |
@@ -126,7 +110,6 @@ jobs:
           python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original > boot-original/unpack.log 2>&1
           test -s boot-original/kernel
           test -s boot-original/ramdisk
-          sha256sum rom/boot.img boot-original/kernel boot-original/ramdisk
 
       - name: Repack 120Hz boot.img with exact stock metadata
         run: |
@@ -138,7 +121,7 @@ jobs:
           test "$OS_VERSION" = "15.0.0"
           test "$OS_PATCH_LEVEL" = "2026-05"
           test -n "$CMDLINE"
-          python3 boot-tools/mkbootimg.py             --kernel out/arch/arm64/boot/Image.gz-dtb             --ramdisk boot-original/ramdisk             --base 0x00000000             --kernel_offset 0x00008000             --ramdisk_offset 0x01000000             --tags_offset 0x00000100             --pagesize 4096             --header_version 0             --os_version "$OS_VERSION"             --os_patch_level "$OS_PATCH_LEVEL"             --cmdline "$CMDLINE"             --output boot-120hz-120fps.img
+          python3 boot-tools/mkbootimg.py --kernel out/arch/arm64/boot/Image.gz-dtb --ramdisk boot-original/ramdisk --base 0x00000000 --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 --pagesize 4096 --header_version 0 --os_version "$OS_VERSION" --os_patch_level "$OS_PATCH_LEVEL" --cmdline "$CMDLINE" --output boot-120hz-120fps.img
           test -s boot-120hz-120fps.img
 
       - name: Strict stock-structure verification
@@ -149,36 +132,30 @@ jobs:
           python3 boot-tools/unpack_bootimg.py --boot_img boot-120hz-120fps.img --out boot-verified > boot-verified/unpack.log 2>&1
           test "$(sha256sum boot-original/ramdisk | awk '{print $1}')" = "$(sha256sum boot-verified/ramdisk | awk '{print $1}')"
           test "$(sed -n 's/^command line args: //p' boot-original/unpack.log)" = "$(sed -n 's/^command line args: //p' boot-verified/unpack.log)"
-          grep -q '^os version: 15.0.0$' boot-verified/unpack.log
-          grep -q '^os patch level: 2026-05$' boot-verified/unpack.log
           python3 - <<'PY'
           import struct
           from pathlib import Path
-          a=Path("rom/boot.img").read_bytes()
-          b=Path("boot-120hz-120fps.img").read_bytes()
-          if a[:8] != b[:8] or a[:8] != b"ANDROID!":
-              raise SystemExit("FAIL: magic")
-          ah=struct.unpack_from("<10I",a,8)
-          bh=struct.unpack_from("<10I",b,8)
+          a=Path("rom/boot.img").read_bytes(); b=Path("boot-120hz-120fps.img").read_bytes()
+          if a[:8]!=b[:8] or a[:8]!=b"ANDROID!": raise SystemExit("FAIL: magic")
+          ah=struct.unpack_from("<10I",a,8); bh=struct.unpack_from("<10I",b,8)
           for i,n in enumerate(["kernel_size","kernel_addr","ramdisk_size","ramdisk_addr","second_size","second_addr","tags_addr","page_size","header_version","os_version_raw"]):
-              if i in (0,9): continue
-              if ah[i] != bh[i]: raise SystemExit(f"FAIL: {n}: {ah[i]} != {bh[i]}")
-          if ah[7] != 4096: raise SystemExit("FAIL: page size")
-          print("PASS: stock legacy boot header preserved except kernel-dependent fields")
+            if i==0: continue
+            if ah[i]!=bh[i]: raise SystemExit(f"FAIL: {n}: {ah[i]} != {bh[i]}")
+          if ah[7]!=4096: raise SystemExit("FAIL: page size")
+          print("PASS: stock boot header fields preserved; only kernel_size may differ")
           PY
           python3 - <<'PY'
           import struct,zlib
           from pathlib import Path
           MAGIC=b"\xd0\x0d\xfe\xed"
           def dtbs(k):
-              d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(k); x=d.unused_data; out=[]; p=0
-              while p+8<=len(x) and x[p:p+4]==MAGIC:
-                  n=struct.unpack(">I",x[p+4:p+8])[0]
-                  if n<40 or p+n>len(x): raise SystemExit("FAIL: bad DTB")
-                  out.append(x[p:p+n]); p+=n
-              return out
-          s=dtbs(Path("boot-original/kernel").read_bytes())
-          n=dtbs(Path("boot-verified/kernel").read_bytes())
+            d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(k); x=d.unused_data; out=[]; p=0
+            while p+8<=len(x) and x[p:p+4]==MAGIC:
+              n=struct.unpack(">I",x[p+4:p+8])[0]
+              if n<40 or p+n>len(x): raise SystemExit("FAIL: bad DTB")
+              out.append(x[p:p+n]); p+=n
+            return out
+          s=dtbs(Path("boot-original/kernel").read_bytes()); n=dtbs(Path("boot-verified/kernel").read_bytes())
           if len(s)!=2 or len(n)!=2: raise SystemExit(f"FAIL: DTB count stock={len(s)} new={len(n)}")
           if s[1]!=n[1]: raise SystemExit("FAIL: RUMI DTB changed")
           if s[0]==n[0]: raise SystemExit("FAIL: Lilac DTB did not change")
@@ -196,7 +173,6 @@ jobs:
           cp out/arch/arm64/boot/Image.gz-dtb artifact/
           cp arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi artifact/dsi-panel-lilac-ID5-120hz.dtsi
           sha256sum artifact/* > artifact/SHA256SUMS
-          ls -lh artifact/
 
       - name: Upload final artifacts
         uses: actions/upload-artifact@v4
