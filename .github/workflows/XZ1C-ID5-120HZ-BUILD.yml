@@ -20,10 +20,10 @@ jobs:
     name: SO-02K ID5 Android 15 120Hz/120FPS
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout clean baseline
+      - name: Checkout triggering commit
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 1
 
       - name: Install dependencies
@@ -69,7 +69,8 @@ jobs:
           b=m.group(0)
           for old,new in [
             ("qcom,mdss-dsi-panel-framerate = <60>;","qcom,mdss-dsi-panel-framerate = <120>;"),
-            ("qcom,mdss-dsi-panel-clockrate = <899000000>;","qcom,mdss-dsi-panel-clockrate = <1798076160>;")]:
+            ("qcom,mdss-dsi-panel-clockrate = <899000000>;","qcom,mdss-dsi-panel-clockrate = <1798076160>;")
+          ]:
             if b.count(old)!=1: raise SystemExit("FAIL: expected exactly one ID5 property: "+old)
             b=b.replace(old,new,1)
           p.write_text(s[:m.start()]+b+s[m.end():])
@@ -95,6 +96,38 @@ jobs:
           set -eux
           make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CONFIG_CC_WERROR=n KCFLAGS="-Wno-error -Wno-unused-value -Wno-maybe-uninitialized" Image.gz-dtb
           test -s out/arch/arm64/boot/Image.gz-dtb
+          file out/arch/arm64/boot/Image.gz-dtb
+          sha256sum out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Audit appended DTB order
+        run: |
+          set -eux
+          python3 - <<'PY'
+          import struct,zlib
+          from pathlib import Path
+          MAGIC=b"\xd0\x0d\xfe\xed"
+          def dtbs(k):
+            d=zlib.decompressobj(16+zlib.MAX_WBITS)
+            d.decompress(k)
+            x=d.unused_data
+            out=[]; p=0
+            while p+8<=len(x) and x[p:p+4]==MAGIC:
+              n=struct.unpack(">I",x[p+4:p+8])[0]
+              if n<40 or p+n>len(x): raise SystemExit("FAIL: malformed appended DTB")
+              out.append(x[p:p+n]); p+=n
+            return out
+          k=Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes()
+          ds=dtbs(k)
+          if len(ds)!=2: raise SystemExit(f"FAIL: expected exactly 2 appended DTBs, found {len(ds)}")
+          lilac=Path("out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb").read_bytes()
+          rumi=Path("out/arch/arm64/boot/dts/qcom/msmhamster-rumi.dtb").read_bytes()
+          if ds[0]!=lilac: raise SystemExit("FAIL: first appended DTB is not Lilac-DCM")
+          if ds[1]!=rumi: raise SystemExit("FAIL: second appended DTB is not RUMI")
+          if ds[0]==rumi: raise SystemExit("FAIL: DTB identity/order invalid")
+          print("PASS: appended DTB order is Lilac-DCM -> RUMI")
+          print(f"Lilac DTB bytes: {len(ds[0])}")
+          print(f"RUMI DTB bytes: {len(ds[1])}")
+          PY
 
       - name: Prepare mkbootimg tools
         run: |
@@ -149,7 +182,8 @@ jobs:
           from pathlib import Path
           MAGIC=b"\xd0\x0d\xfe\xed"
           def dtbs(k):
-            d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(k); x=d.unused_data; out=[]; p=0
+            d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(k); x=d.unused_data
+            out=[]; p=0
             while p+8<=len(x) and x[p:p+4]==MAGIC:
               n=struct.unpack(">I",x[p+4:p+8])[0]
               if n<40 or p+n>len(x): raise SystemExit("FAIL: bad DTB")
