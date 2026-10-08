@@ -1,4 +1,5 @@
 name: XZ1C ID5 120Hz 120FPS BUILD
+# DTB audit fixed: validate binary appended DTBs instead of brittle DTS text matching
 
 on:
   workflow_dispatch:
