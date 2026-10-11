@@ -70,35 +70,40 @@ jobs:
               raise SystemExit("FAIL: ID5 panel block not found")
           b = m.group(0)
 
-          # Static ID5 120Hz configuration: use the known-good porch/clock
-          # values for this panel. Do not touch any other panel block.
-          props = [
-              (r'(?m)^(\s*qcom,mdss-dsi-v-front-porch\s*=\s*)<[^>]+>;', r'\g<1><4>;'),
-              (r'(?m)^(\s*qcom,mdss-dsi-panel-framerate\s*=\s*)<[^>]+>;', r'\g<1><120>;'),
-              (r'(?m)^(\s*qcom,mdss-dsi-panel-clockrate\s*=\s*)<[^>]+>;', r'\g<1><950976000>;'),
-          ]
-          for pattern, repl in props:
-              b, n = re.subn(pattern, repl, b, count=1)
-              if n != 1:
-                  raise SystemExit("FAIL: expected exactly one ID5 property: " + pattern)
+          def set_prop(name, value, insert_after=None):
+              global_dummy = None
+              pattern = r'(?m)^([ \t]*' + re.escape(name) + r'[ \t]*=[ \t]*)<[^>]+>;'
+              new_b, n = re.subn(pattern, lambda m: m.group(1) + '<' + value + '>;', b, count=1)
+              if n == 1:
+                  return new_b
+              if n > 1:
+                  raise SystemExit("FAIL: duplicate ID5 property: " + name)
+              if insert_after is None:
+                  raise SystemExit("FAIL: missing ID5 property: " + name)
+              marker = re.search(r'(?m)^([ \t]*' + re.escape(insert_after) + r'[ \t]*=[ \t]*<[^>]+>;)[ \t]*$', b)
+              if not marker:
+                  raise SystemExit("FAIL: cannot insert property " + name)
+              return b[:marker.end()] + "\n\t\t" + name + " = <" + value + ">;" + b[marker.end():]
 
-          # Some clean source revisions do not yet declare the tear-check
-          # rate. Set it if present; otherwise add it within ID5 only.
-          _, n = re.subn(
-              r'(?m)^(\s*qcom,mdss-tear-check-frame-rate\s*=\s*)<[^>]+>;',
-              r'\g<1><12000>;',
-              b,
-              count=1,
-          )
-          if n == 0:
-              marker = re.search(
-                  r'(?m)^\s*qcom,mdss-dsi-panel-framerate\s*=\s*<120>;\s*          # path whose old porch/clock programming conflicts with the target.
-          b = re.sub(r'(?m)^\s*somc,change-fps-enable;\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,change-fps-panel-type\s*=.*?;\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,change-fps-panel-mode\s*=.*?;\n?', '', b)
-          b = re.sub(r'(?ms)^\s*somc,change-fps-command\s*=\s*\[.*?\];\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)\s*=.*?;\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,change-fps-rtn-pos\s*=.*?;\n?', '', b)
+          for prop, value in [
+              ("qcom,mdss-dsi-v-front-porch", "4"),
+              ("qcom,mdss-dsi-panel-framerate", "120"),
+              ("qcom,mdss-dsi-panel-clockrate", "950976000"),
+          ]:
+              b = set_prop(prop, value)
+
+          b = set_prop("qcom,mdss-tear-check-frame-rate", "12000", "qcom,mdss-dsi-panel-framerate")
+
+          # Use static 120Hz timing; remove the old dynamic-FPS path only in ID5.
+          for pattern in [
+              r'(?m)^[ \t]*somc,change-fps-enable;\n?',
+              r'(?m)^[ \t]*somc,change-fps-panel-type[ \t]*=.*?;\n?',
+              r'(?m)^[ \t]*somc,change-fps-panel-mode[ \t]*=.*?;\n?',
+              r'(?ms)^[ \t]*somc,change-fps-command[ \t]*=[ \t]*\[.*?\];\n?',
+              r'(?m)^[ \t]*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)[ \t]*=.*?;\n?',
+              r'(?m)^[ \t]*somc,change-fps-rtn-pos[ \t]*=.*?;\n?',
+          ]:
+              b = re.sub(pattern, '', b)
 
           required = [
               "qcom,mdss-dsi-v-front-porch = <4>;",
@@ -108,16 +113,14 @@ jobs:
           ]
           for value in required:
               if value not in b:
-                  raise SystemExit("FAIL: ID5 target value missing after patch: " + value)
+                  raise SystemExit("FAIL: ID5 target value missing: " + value)
           if "somc,change-fps-" in b or "somc,driver-ic-vtp" in b:
-              raise SystemExit("FAIL: dynamic-FPS properties remain in ID5 block")
-
+              raise SystemExit("FAIL: dynamic-FPS properties remain in ID5")
           p.write_text(s[:m.start()] + b + s[m.end():])
           PY
 
           git diff --check
           test "$(git diff --name-only)" = "arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi"
-
           ID5="$(awk '
             /dsi_5: somc,5_panel[[:space:]]*\{/ { in_id5=1 }
             in_id5 { print }
