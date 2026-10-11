@@ -173,21 +173,31 @@ jobs:
           python3 - <<'PY'
           import struct,zlib
           from pathlib import Path
-          MAGIC=b"\\xd0\\x0d\\xfe\\xed"
+          MAGIC=bytes.fromhex("d00dfeed")
           def dtbs(kernel):
-            d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(kernel); x=d.unused_data
-            out=[]; p=0
-            while p+8<=len(x) and x[p:p+4]==MAGIC:
-              n=struct.unpack(">I",x[p+4:p+8])[0]
-              if n<40 or p+n>len(x): raise SystemExit("FAIL: malformed DTB")
-              out.append(x[p:p+n]); p+=n
+            d=zlib.decompressobj(16+zlib.MAX_WBITS)
+            d.decompress(kernel)
+            tail=d.unused_data
+            out=[]; pos=0
+            while True:
+              p=tail.find(MAGIC,pos)
+              if p<0: break
+              if p+8>len(tail): break
+              n=struct.unpack_from(">I",tail,p+4)[0]
+              if n<40 or p+n>len(tail):
+                pos=p+4
+                continue
+              out.append(tail[p:p+n])
+              pos=p+n
             return out
           stock=dtbs(Path("boot-original/kernel").read_bytes())
           new=dtbs(Path("boot-verified/kernel").read_bytes())
-          if len(stock)!=2 or len(new)!=2: raise SystemExit(f"FAIL: stock/new DTB counts: {len(stock)}/{len(new)}")
-          if stock[1]!=new[1]: raise SystemExit("FAIL: RUMI DTB is not byte-identical to stock")
-          if stock[0]==new[0]: raise SystemExit("FAIL: Lilac DTB did not change")
-          Path("stock-lilac.dtb").write_bytes(stock[0])
+          if len(stock)!=2 or len(new)!=2:
+            raise SystemExit(f"FAIL: stock/new DTB counts: {len(stock)}/{len(new)}")
+          if stock[1]!=new[1]:
+            raise SystemExit("FAIL: RUMI DTB is not byte-identical to stock")
+          if stock[0]==new[0]:
+            raise SystemExit("FAIL: Lilac DTB did not change")
           Path("new-lilac.dtb").write_bytes(new[0])
           print("PASS: only Lilac DTB differs; RUMI DTB preserved byte-for-byte")
           PY
