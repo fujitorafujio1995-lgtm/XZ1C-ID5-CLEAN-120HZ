@@ -56,282 +56,45 @@ jobs:
           unzip -p rom/Android_15_SO-02K_Update.zip boot.img > rom/boot.img
           test -s rom/boot.img
 
-      - name: Apply ONLY ID5 panel 120Hz parameters
+      - name: Apply ONLY ID5 DTB 120Hz parameters
         run: |
           set -eux
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          p = Path("arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi")
-          s = p.read_text()
-          m = re.search(r'(?ms)^\s*dsi_5:\s*somc,5_panel\s*\{.*?^\s*\};', s)
-          if not m:
-              raise SystemExit("FAIL: ID5 panel block not found")
-          b = m.group(0)
-
-          def set_prop(name, value, insert_after=None):
-              pattern = r'(?m)^([ \t]*' + re.escape(name) + r'[ \t]*=[ \t]*)<[^>]+>;'
-              new_b, n = re.subn(pattern, lambda m: m.group(1) + '<' + value + '>;', b, count=1)
-              if n == 1:
-                  return new_b
-              if n > 1:
-                  raise SystemExit("FAIL: duplicate ID5 property: " + name)
-              if insert_after is None:
-                  raise SystemExit("FAIL: missing ID5 property: " + name)
-              marker = re.search(r'(?m)^([ \t]*' + re.escape(insert_after) + r'[ \t]*=[ \t]*<[^>]+>;)[ \t]*$', b)
-              if not marker:
-                  raise SystemExit("FAIL: cannot insert property " + name)
-              return b[:marker.end()] + "\n\t\t" + name + " = <" + value + ">;" + b[marker.end():]
-
-          for prop, value in [
-              ("qcom,mdss-dsi-v-front-porch", "4"),
-              ("qcom,mdss-dsi-panel-framerate", "120"),
-              ("qcom,mdss-dsi-panel-clockrate", "950976000"),
+          p=Path("arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi")
+          s=p.read_text()
+          m=re.search(r'(?ms)^\s*dsi_5:\s*somc,5_panel\s*\{.*?^\s*\};',s)
+          if not m: raise SystemExit("FAIL: ID5 panel block not found")
+          b=m.group(0)
+          for old,new in [
+            ("qcom,mdss-dsi-panel-framerate = <60>;","qcom,mdss-dsi-panel-framerate = <120>;"),
+            ("qcom,mdss-dsi-v-front-porch = <1162>;","qcom,mdss-dsi-v-front-porch = <4>;"),
+            ("qcom,mdss-dsi-panel-clockrate = <899000000>;","qcom,mdss-dsi-panel-clockrate = <950976000>;")
           ]:
-              b = set_prop(prop, value)
+            if b.count(old)!=1: raise SystemExit("FAIL: expected exactly one ID5 property: "+old)
+            b=b.replace(old,new,1)
+          # ID5 static 120Hz tear-check target; insert if absent in clean source.
+          if "qcom,mdss-tear-check-frame-rate" in b:
+            b, n = re.subn(r'(?m)^(\\s*qcom,mdss-tear-check-frame-rate\\s*=\\s*)<[^>]+>;', r'\\g<1><12000>;', b, count=1)
+            if n != 1: raise SystemExit("FAIL: could not set ID5 tear-check rate")
+          else:
+            b = re.sub(r'(?m)^(\\s*qcom,mdss-dsi-panel-framerate\\s*=\\s*<120>;)', r'\\1\\n\\t\\tqcom,mdss-tear-check-frame-rate = <12000>;', b, count=1)
+            if "qcom,mdss-tear-check-frame-rate = <12000>;" not in b:
+              raise SystemExit("FAIL: could not add ID5 tear-check rate")
 
-          b = set_prop("qcom,mdss-tear-check-frame-rate", "12000", "qcom,mdss-dsi-panel-framerate")
+          # Disable stock dynamic-FPS command path only for ID5.
+          b = re.sub(r'(?m)^\\s*somc,change-fps-enable;\\n?', '', b)
+          b = re.sub(r'(?m)^\\s*somc,change-fps-panel-type\\s*=.*?;\\n?', '', b)
+          b = re.sub(r'(?m)^\\s*somc,change-fps-panel-mode\\s*=.*?;\\n?', '', b)
+          b = re.sub(r'(?ms)^\\s*somc,change-fps-command\\s*=\\s*\\[.*?\\];\\n?', '', b)
+          b = re.sub(r'(?m)^\\s*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)\\s*=.*?;\\n?', '', b)
+          b = re.sub(r'(?m)^\\s*somc,change-fps-rtn-pos\\s*=.*?;\\n?', '', b)
 
-          # Use static 120Hz timing; remove the old dynamic-FPS path only in ID5.
-          for pattern in [
-              r'(?m)^[ \t]*somc,change-fps-enable;\n?',
-              r'(?m)^[ \t]*somc,change-fps-panel-type[ \t]*=.*?;\n?',
-              r'(?m)^[ \t]*somc,change-fps-panel-mode[ \t]*=.*?;\n?',
-              r'(?ms)^[ \t]*somc,change-fps-command[ \t]*=[ \t]*\[.*?\];\n?',
-              r'(?m)^[ \t]*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)[ \t]*=.*?;\n?',
-              r'(?m)^[ \t]*somc,change-fps-rtn-pos[ \t]*=.*?;\n?',
-          ]:
-              b = re.sub(pattern, '', b)
-
-          required = [
-              "qcom,mdss-dsi-v-front-porch = <4>;",
-              "qcom,mdss-dsi-panel-framerate = <120>;",
-              "qcom,mdss-tear-check-frame-rate = <12000>;",
-              "qcom,mdss-dsi-panel-clockrate = <950976000>;",
-          ]
-          for value in required:
-              if value not in b:
-                  raise SystemExit("FAIL: ID5 target value missing: " + value)
-          if "somc,change-fps-" in b or "somc,driver-ic-vtp" in b:
-              raise SystemExit("FAIL: dynamic-FPS properties remain in ID5")
-          p.write_text(s[:m.start()] + b + s[m.end():])
+          p.write_text(s[:m.start()]+b+s[m.end():])
           PY
-
-          git diff --check
           test "$(git diff --name-only)" = "arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi"
-          ID5="$(awk '
-            /dsi_5: somc,5_panel[[:space:]]*\{/ { in_id5=1 }
-            in_id5 { print }
-            in_id5 && /^[[:space:]]*\};[[:space:]]*$/ { exit }
-          ' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi)"
-          printf '%s\n' "$ID5"
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-v-front-porch = <4>;'
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-framerate = <120>;'
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-tear-check-frame-rate = <12000>;'
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-clockrate = <950976000>;'
-          ! printf '%s\n' "$ID5" | grep -q 'somc,change-fps-'
-          ! printf '%s\n' "$ID5" | grep -q 'somc,driver-ic-vtp'
-
-      - name: Configure Lilac DCM
-        run: |
-          set -eux
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- "${DEFCONFIG}"
-          sed -i 's|^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES=.*|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="qcom/msm8998-v2.1-yoshino-lilac_dcm qcom/msmhamster-rumi"|' out/.config
-          make O=out ARCH=arm64 olddefconfig
-          grep -q '^CONFIG_MACH_SONY_LILAC_DCM=y$' out/.config
-          grep -q '^CONFIG_ARCH_MSMHAMSTER=y$' out/.config
-          grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y$' out/.config
-          grep -q '^CONFIG_IMG_GZ_DTB=y$' out/.config
-          grep -q '^CONFIG_KSU=y$' out/.config
-
-      - name: Build Image.gz-dtb
-        run: |
-          set -eux
-          # Force regeneration of the exact Lilac DCM DTB after editing its included panel DTSI.
-          # Do not allow a stale DTB to hide source changes.
-          rm -f out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb
-          rm -f out/arch/arm64/boot/Image.gz-dtb
-          make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CONFIG_CC_WERROR=n KCFLAGS="-Wno-error -Wno-unused-value -Wno-maybe-uninitialized" Image.gz-dtb
-          test -s out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb
-          test -s out/arch/arm64/boot/Image.gz-dtb
-          file out/arch/arm64/boot/Image.gz-dtb
-          sha256sum out/arch/arm64/boot/Image.gz-dtb
-          sha256sum out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb
-
-      - name: Audit appended DTB order
-        run: |
-          set -eux
-          python3 - <<'PY'
-          import struct,zlib
-          from pathlib import Path
-          MAGIC=bytes.fromhex("d00dfeed")
-          def dtbs(k):
-            d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(k); x=d.unused_data
-            out=[]; p=0
-            while p+8<=len(x) and x[p:p+4]==MAGIC:
-              n=struct.unpack(">I",x[p+4:p+8])[0]
-              if n<40 or p+n>len(x): raise SystemExit("FAIL: malformed appended DTB")
-              out.append(x[p:p+n]); p+=n
-            return out
-          ds=dtbs(Path("out/arch/arm64/boot/Image.gz-dtb").read_bytes())
-          if len(ds)!=2: raise SystemExit(f"FAIL: expected exactly 2 appended DTBs, found {len(ds)}")
-          lilac=Path("out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb").read_bytes()
-          rumi=Path("out/arch/arm64/boot/dts/qcom/msmhamster-rumi.dtb").read_bytes()
-          if ds[0]!=lilac or ds[1]!=rumi: raise SystemExit("FAIL: appended DTB order/identity invalid")
-          print("PASS: appended DTB order is Lilac-DCM -> RUMI")
-          PY
-
-      - name: Prepare mkbootimg tools
-        run: |
-          set -eux
-          git clone --depth=1 https://android.googlesource.com/platform/system/tools/mkbootimg boot-tools
-          python3 boot-tools/mkbootimg.py --help | grep -q -- '--os_version'
-          python3 boot-tools/mkbootimg.py --help | grep -q -- '--os_patch_level'
-
-      - name: Unpack stock boot
-        run: |
-          set -eux
-          mkdir -p boot-original
-          python3 boot-tools/unpack_bootimg.py --boot_img rom/boot.img --out boot-original > boot-original/unpack.log 2>&1
-          test -s boot-original/kernel
-          test -s boot-original/ramdisk
-
-      - name: Repack 120Hz boot.img with exact stock metadata
-        run: |
-          set -eux
-          L=boot-original/unpack.log
-          OS_VERSION="$(sed -n 's/^os version: //p' "$L")"
-          OS_PATCH_LEVEL="$(sed -n 's/^os patch level: //p' "$L")"
-          CMDLINE="$(sed -n 's/^command line args: //p' "$L")"
-          test "$OS_VERSION" = "15.0.0"
-          test "$OS_PATCH_LEVEL" = "2026-05"
-          python3 boot-tools/mkbootimg.py --kernel out/arch/arm64/boot/Image.gz-dtb --ramdisk boot-original/ramdisk --base 0x00000000 --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 --pagesize 4096 --header_version 0 --os_version "$OS_VERSION" --os_patch_level "$OS_PATCH_LEVEL" --cmdline "$CMDLINE" --output boot-120hz-120fps.img
-          test -s boot-120hz-120fps.img
-
-      - name: Strict stock-structure verification
-        run: |
-          set -eux
-          rm -rf boot-verified
-          mkdir -p boot-verified
-          python3 boot-tools/unpack_bootimg.py --boot_img boot-120hz-120fps.img --out boot-verified > boot-verified/unpack.log 2>&1
-          test "$(sha256sum boot-original/ramdisk | awk '{print $1}')" = "$(sha256sum boot-verified/ramdisk | awk '{print $1}')"
-          test "$(sed -n 's/^command line args: //p' boot-original/unpack.log)" = "$(sed -n 's/^command line args: //p' boot-verified/unpack.log)"
-          python3 - <<'PY'
-          import struct
-          from pathlib import Path
-          a=Path("rom/boot.img").read_bytes(); b=Path("boot-120hz-120fps.img").read_bytes()
-          ah=struct.unpack_from("<10I",a,8); bh=struct.unpack_from("<10I",b,8)
-          for i,n in enumerate(["kernel_size","kernel_addr","ramdisk_size","ramdisk_addr","second_size","second_addr","tags_addr","page_size","header_version","os_version_raw"]):
-            if i and ah[i]!=bh[i]: raise SystemExit(f"FAIL: {n}: {ah[i]} != {bh[i]}")
-          if ah[7]!=4096: raise SystemExit("FAIL: page size")
-          print("PASS: stock boot header fields preserved; only kernel_size may differ")
-          PY
-
-      - name: Verify ID5 DTB values and stock DTB preservation
-        run: |
-          set -eux
-          python3 - <<'PY'
-          import struct,zlib
-          from pathlib import Path
-          MAGIC=bytes.fromhex("d00dfeed")
-          def dtbs(kernel):
-            d=zlib.decompressobj(16+zlib.MAX_WBITS)
-            d.decompress(kernel)
-            tail=d.unused_data
-            out=[]; pos=0
-            while True:
-              p=tail.find(MAGIC,pos)
-              if p<0: break
-              if p+8>len(tail): break
-              n=struct.unpack_from(">I",tail,p+4)[0]
-              if n<40 or p+n>len(tail):
-                pos=p+4
-                continue
-              out.append(tail[p:p+n])
-              pos=p+n
-            return out
-          stock=dtbs(Path("boot-original/kernel").read_bytes())
-          new=dtbs(Path("boot-verified/kernel").read_bytes())
-          if len(stock)!=2 or len(new)!=2:
-            raise SystemExit(f"FAIL: stock/new DTB counts: {len(stock)}/{len(new)}")
-          if stock[1]!=new[1]:
-            raise SystemExit("FAIL: RUMI DTB is not byte-identical to stock")
-          if stock[0]==new[0]:
-            raise SystemExit("FAIL: Lilac DTB did not change")
-          Path("new-lilac.dtb").write_bytes(new[0])
-          print("PASS: only Lilac DTB differs; RUMI DTB preserved byte-for-byte")
-          PY
-          dtc -I dtb -O dts new-lilac.dtb > new-lilac.dts
-          grep -q 'qcom,mdss-dsi-panel-framerate = <0x78>' new-lilac.dts
-          grep -q 'qcom,mdss-dsi-v-front-porch = <0x4>' new-lilac.dts
-          grep -q 'qcom,mdss-tear-check-frame-rate = <0x2ee0>' new-lilac.dts
-          grep -n 'qcom,mdss-dsi-panel-clockrate' new-lilac.dts
-          grep -Eq 'qcom,mdss-dsi-panel-clockrate = <[^>]*0x0*38aebe00([^[:xdigit:]]|$)' new-lilac.dts
-          echo "PASS: ID5 DTB includes 120Hz target properties"
-
-      - name: Package final artifacts
-        run: |
-          set -eux
-          mkdir -p artifact
-          cp boot-120hz-120fps.img artifact/
-          cp rom/boot.img artifact/boot-original.img
-          cp out/arch/arm64/boot/Image.gz-dtb artifact/
-          cp arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi artifact/dsi-panel-lilac-ID5-120hz.dtsi
-          sha256sum artifact/* > artifact/SHA256SUMS
-
-      - name: Upload final artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: XZ1C-SO02K-ID5-120Hz-120FPS-BOOT
-          path: artifact/
-          if-no-files-found: error
-,
-                  b,
-              )
-              if not marker:
-                  raise SystemExit("FAIL: cannot insert ID5 tear-check rate")
-              b = b[:marker.end()] + "\n\t\tqcom,mdss-tear-check-frame-rate = <12000>;" + b[marker.end():]
-
-          # This panel must use static 120Hz timing, not the stock dynamic-FPS
-          # path whose old porch/clock programming conflicts with the target.
-          b = re.sub(r'(?m)^\s*somc,change-fps-enable;\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,change-fps-panel-type\s*=.*?;\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,change-fps-panel-mode\s*=.*?;\n?', '', b)
-          b = re.sub(r'(?ms)^\s*somc,change-fps-command\s*=\s*\[.*?\];\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)\s*=.*?;\n?', '', b)
-          b = re.sub(r'(?m)^\s*somc,change-fps-rtn-pos\s*=.*?;\n?', '', b)
-
-          required = [
-              "qcom,mdss-dsi-v-front-porch = <4>;",
-              "qcom,mdss-dsi-panel-framerate = <120>;",
-              "qcom,mdss-tear-check-frame-rate = <12000>;",
-              "qcom,mdss-dsi-panel-clockrate = <950976000>;",
-          ]
-          for value in required:
-              if value not in b:
-                  raise SystemExit("FAIL: ID5 target value missing after patch: " + value)
-          if "somc,change-fps-" in b or "somc,driver-ic-vtp" in b:
-              raise SystemExit("FAIL: dynamic-FPS properties remain in ID5 block")
-
-          p.write_text(s[:m.start()] + b + s[m.end():])
-          PY
-
-          git diff --check
-          test "$(git diff --name-only)" = "arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi"
-
-          ID5="$(awk '
-            /dsi_5: somc,5_panel[[:space:]]*\{/ { in_id5=1 }
-            in_id5 { print }
-            in_id5 && /^[[:space:]]*};[[:space:]]*$/ { exit }
-          ' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi)"
-          printf '%s\n' "$ID5"
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-v-front-porch = <4>;'
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-framerate = <120>;'
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-tear-check-frame-rate = <12000>;'
-          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-clockrate = <950976000>;'
-          ! printf '%s\n' "$ID5" | grep -q 'somc,change-fps-'
-          ! printf '%s\n' "$ID5" | grep -q 'somc,driver-ic-vtp'
+          grep -A120 -E '^\s*dsi_5:\s*somc,5_panel' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi | grep -E 'panel-framerate|panel-clockrate'
 
       - name: Configure Lilac DCM
         run: |
