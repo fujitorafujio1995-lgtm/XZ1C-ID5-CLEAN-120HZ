@@ -76,20 +76,20 @@ jobs:
             b=b.replace(old,new,1)
           # ID5 static 120Hz tear-check target; insert if absent in clean source.
           if "qcom,mdss-tear-check-frame-rate" in b:
-            b, n = re.subn(r'(?m)^(\\s*qcom,mdss-tear-check-frame-rate\\s*=\\s*)<[^>]+>;', r'\\g<1><12000>;', b, count=1)
+            b, n = re.subn(r'(?m)^(\s*qcom,mdss-tear-check-frame-rate\s*=\s*)<[^>]+>;', r'\g<1><12000>;', b, count=1)
             if n != 1: raise SystemExit("FAIL: could not set ID5 tear-check rate")
           else:
-            b = re.sub(r'(?m)^(\\s*qcom,mdss-dsi-panel-framerate\\s*=\\s*<120>;)', r'\\1\\n\\t\\tqcom,mdss-tear-check-frame-rate = <12000>;', b, count=1)
+            b = re.sub(r'(?m)^(\s*qcom,mdss-dsi-panel-framerate\s*=\s*<120>;)', r'\1\n\t\tqcom,mdss-tear-check-frame-rate = <12000>;', b, count=1)
             if "qcom,mdss-tear-check-frame-rate = <12000>;" not in b:
               raise SystemExit("FAIL: could not add ID5 tear-check rate")
 
           # Disable stock dynamic-FPS command path only for ID5.
-          b = re.sub(r'(?m)^\\s*somc,change-fps-enable;\\n?', '', b)
-          b = re.sub(r'(?m)^\\s*somc,change-fps-panel-type\\s*=.*?;\\n?', '', b)
-          b = re.sub(r'(?m)^\\s*somc,change-fps-panel-mode\\s*=.*?;\\n?', '', b)
-          b = re.sub(r'(?ms)^\\s*somc,change-fps-command\\s*=\\s*\\[.*?\\];\\n?', '', b)
-          b = re.sub(r'(?m)^\\s*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)\\s*=.*?;\\n?', '', b)
-          b = re.sub(r'(?m)^\\s*somc,change-fps-rtn-pos\\s*=.*?;\\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,change-fps-enable;\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,change-fps-panel-type\s*=.*?;\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,change-fps-panel-mode\s*=.*?;\n?', '', b)
+          b = re.sub(r'(?ms)^\s*somc,change-fps-command\s*=\s*\[.*?\];\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)\s*=.*?;\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,change-fps-rtn-pos\s*=.*?;\n?', '', b)
 
           p.write_text(s[:m.start()]+b+s[m.end():])
           PY
