@@ -237,7 +237,7 @@ jobs:
         run: |
           set -eux
           mkdir -p artifact
-          cp boot-120hz-120fps.img artifact/
+          cp boot-120hz-120fps.img artifact/boot120hz.img
           cp rom/boot.img artifact/boot-original.img
           cp out/arch/arm64/boot/Image.gz-dtb artifact/
           cp arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi artifact/dsi-panel-lilac-ID5-120hz.dtsi
