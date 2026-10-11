@@ -167,6 +167,35 @@ jobs:
           print("PASS: stock boot header fields preserved; only kernel_size may differ")
           PY
 
+      - name: Verify ID5 DTB values and stock DTB preservation
+        run: |
+          set -eux
+          python3 - <<'PY'
+          import struct,zlib
+          from pathlib import Path
+          MAGIC=b"\\xd0\\x0d\\xfe\\xed"
+          def dtbs(kernel):
+            d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(kernel); x=d.unused_data
+            out=[]; p=0
+            while p+8<=len(x) and x[p:p+4]==MAGIC:
+              n=struct.unpack(">I",x[p+4:p+8])[0]
+              if n<40 or p+n>len(x): raise SystemExit("FAIL: malformed DTB")
+              out.append(x[p:p+n]); p+=n
+            return out
+          stock=dtbs(Path("boot-original/kernel").read_bytes())
+          new=dtbs(Path("boot-verified/kernel").read_bytes())
+          if len(stock)!=2 or len(new)!=2: raise SystemExit(f"FAIL: stock/new DTB counts: {len(stock)}/{len(new)}")
+          if stock[1]!=new[1]: raise SystemExit("FAIL: RUMI DTB is not byte-identical to stock")
+          if stock[0]==new[0]: raise SystemExit("FAIL: Lilac DTB did not change")
+          Path("stock-lilac.dtb").write_bytes(stock[0])
+          Path("new-lilac.dtb").write_bytes(new[0])
+          print("PASS: only Lilac DTB differs; RUMI DTB preserved byte-for-byte")
+          PY
+          dtc -I dtb -O dts new-lilac.dtb > new-lilac.dts
+          grep -q 'qcom,mdss-dsi-panel-framerate = <0x78>' new-lilac.dts
+          grep -q 'qcom,mdss-dsi-panel-clockrate = <0x6b2' new-lilac.dts
+          echo "PASS: ID5 DTB includes 120Hz target properties"
+
       - name: Package final artifacts
         run: |
           set -eux
