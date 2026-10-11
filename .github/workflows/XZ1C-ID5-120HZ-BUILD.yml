@@ -93,10 +93,16 @@ jobs:
       - name: Build Image.gz-dtb
         run: |
           set -eux
+          # Force regeneration of the exact Lilac DCM DTB after editing its included panel DTSI.
+          # Do not allow a stale DTB to hide source changes.
+          rm -f out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb
+          rm -f out/arch/arm64/boot/Image.gz-dtb
           make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CONFIG_CC_WERROR=n KCFLAGS="-Wno-error -Wno-unused-value -Wno-maybe-uninitialized" Image.gz-dtb
+          test -s out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb
           test -s out/arch/arm64/boot/Image.gz-dtb
           file out/arch/arm64/boot/Image.gz-dtb
           sha256sum out/arch/arm64/boot/Image.gz-dtb
+          sha256sum out/arch/arm64/boot/dts/qcom/msm8998-v2.1-yoshino-lilac_dcm.dtb
 
       - name: Audit appended DTB order
         run: |
