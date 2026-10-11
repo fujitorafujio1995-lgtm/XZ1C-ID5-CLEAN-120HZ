@@ -193,7 +193,7 @@ jobs:
           PY
           dtc -I dtb -O dts new-lilac.dtb > new-lilac.dts
           grep -q 'qcom,mdss-dsi-panel-framerate = <0x78>' new-lilac.dts
-          grep -q 'qcom,mdss-dsi-panel-clockrate = <0x6b2' new-lilac.dts
+          grep -q 'qcom,mdss-dsi-panel-clockrate = <0x6b2c7700>' new-lilac.dts
           echo "PASS: ID5 DTB includes 120Hz target properties"
 
       - name: Package final artifacts
