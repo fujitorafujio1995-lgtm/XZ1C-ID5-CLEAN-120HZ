@@ -71,7 +71,6 @@ jobs:
           b = m.group(0)
 
           def set_prop(name, value, insert_after=None):
-              global_dummy = None
               pattern = r'(?m)^([ \t]*' + re.escape(name) + r'[ \t]*=[ \t]*)<[^>]+>;'
               new_b, n = re.subn(pattern, lambda m: m.group(1) + '<' + value + '>;', b, count=1)
               if n == 1:
@@ -124,7 +123,7 @@ jobs:
           ID5="$(awk '
             /dsi_5: somc,5_panel[[:space:]]*\{/ { in_id5=1 }
             in_id5 { print }
-            in_id5 && /^[[:space:]]*};[[:space:]]*$/ { exit }
+            in_id5 && /^[[:space:]]*\};[[:space:]]*$/ { exit }
           ' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi)"
           printf '%s\n' "$ID5"
           printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-v-front-porch = <4>;'
