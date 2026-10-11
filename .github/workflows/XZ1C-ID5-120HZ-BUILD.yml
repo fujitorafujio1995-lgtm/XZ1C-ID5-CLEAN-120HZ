@@ -79,9 +79,10 @@ jobs:
             b, n = re.subn(r'(?m)^(\s*qcom,mdss-tear-check-frame-rate\s*=\s*)<[^>]+>;', r'\g<1><12000>;', b, count=1)
             if n != 1: raise SystemExit("FAIL: could not set ID5 tear-check rate")
           else:
-            b = re.sub(r'(?m)^(\s*qcom,mdss-dsi-panel-framerate\s*=\s*<120>;)', r'\1\n\t\tqcom,mdss-tear-check-frame-rate = <12000>;', b, count=1)
-            if "qcom,mdss-tear-check-frame-rate = <12000>;" not in b:
-              raise SystemExit("FAIL: could not add ID5 tear-check rate")
+            frame_rate = "qcom,mdss-dsi-panel-framerate = <120>;"
+            if b.count(frame_rate) != 1:
+              raise SystemExit("FAIL: expected exactly one ID5 120Hz frame-rate property")
+            b = b.replace(frame_rate, frame_rate + "\n\t\tqcom,mdss-tear-check-frame-rate = <12000>;", 1)
 
           # Disable stock dynamic-FPS command path only for ID5.
           b = re.sub(r'(?m)^\s*somc,change-fps-enable;\n?', '', b)
