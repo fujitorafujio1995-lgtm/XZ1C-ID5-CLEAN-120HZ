@@ -56,27 +56,72 @@ jobs:
           unzip -p rom/Android_15_SO-02K_Update.zip boot.img > rom/boot.img
           test -s rom/boot.img
 
-      - name: Apply ONLY ID5 DTB 120Hz parameters
+      - name: Apply ONLY ID5 panel 120Hz parameters
         run: |
           set -eux
           python3 - <<'PY'
           from pathlib import Path
           import re
-          p=Path("arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi")
-          s=p.read_text()
-          m=re.search(r'(?ms)^\s*dsi_5:\s*somc,5_panel\s*\{.*?^\s*\};',s)
-          if not m: raise SystemExit("FAIL: ID5 panel block not found")
-          b=m.group(0)
-          for old,new in [
-            ("qcom,mdss-dsi-panel-framerate = <60>;","qcom,mdss-dsi-panel-framerate = <120>;"),
-            ("qcom,mdss-dsi-panel-clockrate = <899000000>;","qcom,mdss-dsi-panel-clockrate = <1798076160>;")
-          ]:
-            if b.count(old)!=1: raise SystemExit("FAIL: expected exactly one ID5 property: "+old)
-            b=b.replace(old,new,1)
-          p.write_text(s[:m.start()]+b+s[m.end():])
+
+          p = Path("arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi")
+          s = p.read_text()
+          m = re.search(r'(?ms)^\s*dsi_5:\s*somc,5_panel\s*\{.*?^\s*\};', s)
+          if not m:
+              raise SystemExit("FAIL: ID5 panel block not found")
+          b = m.group(0)
+
+          # Static ID5 120Hz configuration: use the known-good porch/clock
+          # values for this panel. Do not touch any other panel block.
+          props = [
+              (r'(?m)^(\s*qcom,mdss-dsi-v-front-porch\s*=\s*)<[^>]+>;', r'\g<1><4>;'),
+              (r'(?m)^(\s*qcom,mdss-dsi-panel-framerate\s*=\s*)<[^>]+>;', r'\g<1><120>;'),
+              (r'(?m)^(\s*qcom,mdss-tear-check-frame-rate\s*=\s*)<[^>]+>;', r'\g<1><12000>;'),
+              (r'(?m)^(\s*qcom,mdss-dsi-panel-clockrate\s*=\s*)<[^>]+>;', r'\g<1><950976000>;'),
+          ]
+          for pattern, repl in props:
+              b, n = re.subn(pattern, repl, b, count=1)
+              if n != 1:
+                  raise SystemExit("FAIL: expected exactly one ID5 property: " + pattern)
+
+          # This panel must use static 120Hz timing, not the stock dynamic-FPS
+          # path whose old porch/clock programming conflicts with the target.
+          b = re.sub(r'(?m)^\s*somc,change-fps-enable;\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,change-fps-panel-type\s*=.*?;\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,change-fps-panel-mode\s*=.*?;\n?', '', b)
+          b = re.sub(r'(?ms)^\s*somc,change-fps-command\s*=\s*\[.*?\];\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,driver-ic-(?:total-porch|vdisp|rclk|vtp)\s*=.*?;\n?', '', b)
+          b = re.sub(r'(?m)^\s*somc,change-fps-rtn-pos\s*=.*?;\n?', '', b)
+
+          required = [
+              "qcom,mdss-dsi-v-front-porch = <4>;",
+              "qcom,mdss-dsi-panel-framerate = <120>;",
+              "qcom,mdss-tear-check-frame-rate = <12000>;",
+              "qcom,mdss-dsi-panel-clockrate = <950976000>;",
+          ]
+          for value in required:
+              if value not in b:
+                  raise SystemExit("FAIL: ID5 target value missing after patch: " + value)
+          if "somc,change-fps-" in b or "somc,driver-ic-vtp" in b:
+              raise SystemExit("FAIL: dynamic-FPS properties remain in ID5 block")
+
+          p.write_text(s[:m.start()] + b + s[m.end():])
           PY
+
+          git diff --check
           test "$(git diff --name-only)" = "arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi"
-          grep -A120 -E '^\s*dsi_5:\s*somc,5_panel' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi | grep -E 'panel-framerate|panel-clockrate'
+
+          ID5="$(awk '
+            /dsi_5: somc,5_panel[[:space:]]*\{/ { in_id5=1 }
+            in_id5 { print }
+            in_id5 && /^[[:space:]]*};[[:space:]]*$/ { exit }
+          ' arch/arm/boot/dts/qcom/dsi-panel-lilac.dtsi)"
+          printf '%s\n' "$ID5"
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-v-front-porch = <4>;'
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-framerate = <120>;'
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-tear-check-frame-rate = <12000>;'
+          printf '%s\n' "$ID5" | grep -q 'qcom,mdss-dsi-panel-clockrate = <950976000>;'
+          ! printf '%s\n' "$ID5" | grep -q 'somc,change-fps-'
+          ! printf '%s\n' "$ID5" | grep -q 'somc,driver-ic-vtp'
 
       - name: Configure Lilac DCM
         run: |
@@ -209,8 +254,10 @@ jobs:
           PY
           dtc -I dtb -O dts new-lilac.dtb > new-lilac.dts
           grep -q 'qcom,mdss-dsi-panel-framerate = <0x78>' new-lilac.dts
+          grep -q 'qcom,mdss-dsi-v-front-porch = <0x4>' new-lilac.dts
+          grep -q 'qcom,mdss-tear-check-frame-rate = <0x2ee0>' new-lilac.dts
           grep -n 'qcom,mdss-dsi-panel-clockrate' new-lilac.dts
-          grep -Eq 'qcom,mdss-dsi-panel-clockrate = <[^>]*0x0*6b2c7700([^[:xdigit:]]|$)' new-lilac.dts
+          grep -Eq 'qcom,mdss-dsi-panel-clockrate = <[^>]*0x0*38aebe00([^[:xdigit:]]|$)' new-lilac.dts
           echo "PASS: ID5 DTB includes 120Hz target properties"
 
       - name: Package final artifacts
