@@ -104,7 +104,7 @@ jobs:
           python3 - <<'PY'
           import struct,zlib
           from pathlib import Path
-          MAGIC=b"\xd0\x0d\xfe\xed"
+          MAGIC=bytes.fromhex("d00dfeed")
           def dtbs(k):
             d=zlib.decompressobj(16+zlib.MAX_WBITS); d.decompress(k); x=d.unused_data
             out=[]; p=0
