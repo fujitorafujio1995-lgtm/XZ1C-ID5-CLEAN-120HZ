@@ -229,7 +229,7 @@ jobs:
           dtc -I dtb -O dts new-lilac.dtb > new-lilac.dts
           grep -q 'qcom,mdss-dsi-panel-framerate = <0x78>' new-lilac.dts
           grep -q 'qcom,mdss-dsi-v-front-porch = <0x4>' new-lilac.dts
-          grep -q 'qcom,mdss-tear-check-frame-rate = <0x2ee0>' new-lilac.dts
+          grep -Eq 'qcom,mdss-tear-check-frame-rate = <[^>]*0x0*2ee0([^[:xdigit:]]|$)' new-lilac.dts
           grep -n 'qcom,mdss-dsi-panel-clockrate' new-lilac.dts
           grep -Eq 'qcom,mdss-dsi-panel-clockrate = <[^>]*0x0*38aebe00([^[:xdigit:]]|$)' new-lilac.dts
           echo "PASS: ID5 DTB includes 120Hz target properties"
